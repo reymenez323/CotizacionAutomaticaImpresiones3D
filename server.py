@@ -43,6 +43,9 @@ PROFIT_MULTIPLIER = 1.6
 ELECTRICITY_RATE_PER_KWH = 8.59
 PRINTER_AVERAGE_POWER_KW = 0.35
 SETUP_COST_PER_PLATE = 100.0
+SLICER_PLATE_TIMEOUT_SECONDS = int(os.environ.get("SLICER_PLATE_TIMEOUT_SECONDS", "60"))
+SLICER_INDIVIDUAL_TIMEOUT_SECONDS = int(os.environ.get("SLICER_INDIVIDUAL_TIMEOUT_SECONDS", "60"))
+INDIVIDUAL_FALLBACK_TIME_CORRECTION = float(os.environ.get("INDIVIDUAL_FALLBACK_TIME_CORRECTION", "1.25"))
 MINIMUM_QUOTE = 150.0
 
 
@@ -647,6 +650,11 @@ async def http_exception_debug_handler(request, exc: HTTPException):
         status_code=exc.status_code,
         content={"detail": exc.detail},
     )
+
+
+class SlicerTimeoutError(Exception):
+    """Raised when PrusaSlicer exceeds the allowed timeout for a full plate."""
+    pass
 
 
 @dataclass
@@ -1771,6 +1779,22 @@ def export_plate_stl(plate: dict, output_path: Path) -> None:
     combined.export(output_path)
 
 
+def export_single_placement_stl(placement: dict, output_path: Path) -> None:
+    mesh = mesh_for_placement(placement)
+    bounds = mesh.bounds
+
+    print(
+        f"[export_single_placement_stl] {output_path.name} "
+        f"{placement['model'].filename} copy={placement.get('copyIndex', 0)} "
+        f"bounds X={bounds[0][0]:.2f}..{bounds[1][0]:.2f}, "
+        f"Y={bounds[0][1]:.2f}..{bounds[1][1]:.2f}, "
+        f"Z={bounds[0][2]:.2f}..{bounds[1][2]:.2f}",
+        flush=True,
+    )
+
+    mesh.export(output_path)
+
+
 def build_prusaslicer_command(
     slicer: str,
     input_file: Path,
@@ -1867,6 +1891,7 @@ def slice_plate(
     plate_stl: Path,
     gcode_path: Path,
     group: tuple,
+    timeout_seconds: int = SLICER_PLATE_TIMEOUT_SECONDS,
 ) -> dict:
     material, infill, layer_height, walls, supports = group
 
@@ -1881,14 +1906,19 @@ def slice_plate(
         supports=supports,
     )
 
-    result = subprocess.run(
-        cmd,
-        cwd=plate_stl.parent,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-        timeout=300,
-    )
+    try:
+        result = subprocess.run(
+            cmd,
+            cwd=plate_stl.parent,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=timeout_seconds,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise SlicerTimeoutError(
+            f"PrusaSlicer excedió {timeout_seconds} segundos para {plate_stl.name}."
+        ) from exc
 
     if result.returncode != 0 or not gcode_path.exists():
         raise HTTPException(
@@ -1916,6 +1946,72 @@ def slice_plate(
     return stats
 
 
+def slice_plate_individually_after_timeout(
+    slicer: str,
+    plate: dict,
+    tmp_dir: Path,
+    group: tuple,
+    group_index: int,
+    plate_index: int,
+) -> dict:
+    """
+    Fallback de precisión:
+    Si una cama completa tarda demasiado, se procesa cada pieza de esa cama
+    por separado, se suman gramos y tiempo, y al tiempo se le aplica una
+    corrección de +25% por defecto.
+    """
+    total_filament_g = 0.0
+    raw_print_hours = 0.0
+    pieces = []
+
+    print(
+        f"[slice-fallback] Grupo {group_index}, cama {plate_index + 1}: "
+        f"cambiando a slicing individual por timeout.",
+        flush=True,
+    )
+
+    for item_index, placement in enumerate(plate["placements"]):
+        model: PrintableModel = placement["model"]
+
+        single_stl = tmp_dir / f"group_{group_index}_plate_{plate_index}_piece_{item_index}.stl"
+        single_gcode = tmp_dir / f"group_{group_index}_plate_{plate_index}_piece_{item_index}.gcode"
+
+        export_single_placement_stl(placement, single_stl)
+
+        stats = slice_plate(
+            slicer=slicer,
+            plate_stl=single_stl,
+            gcode_path=single_gcode,
+            group=group,
+            timeout_seconds=SLICER_INDIVIDUAL_TIMEOUT_SECONDS,
+        )
+
+        filament_g = float(stats["filamentGrams"])
+        print_hours = float(stats["printHours"])
+
+        total_filament_g += filament_g
+        raw_print_hours += print_hours
+
+        pieces.append({
+            "filename": model.filename,
+            "copyIndex": int(placement.get("copyIndex", 0)) + 1,
+            "filamentGrams": filament_g,
+            "rawPrintHours": print_hours,
+        })
+
+    corrected_hours = raw_print_hours * INDIVIDUAL_FALLBACK_TIME_CORRECTION
+
+    return {
+        "filamentGrams": total_filament_g,
+        "printHours": corrected_hours,
+        "rawPrintHours": raw_print_hours,
+        "fallbackUsed": True,
+        "fallbackReason": f"Full plate exceeded {SLICER_PLATE_TIMEOUT_SECONDS} seconds.",
+        "timeCorrectionFactor": INDIVIDUAL_FALLBACK_TIME_CORRECTION,
+        "pieces": pieces,
+    }
+
+
 
 
 @app.get("/api/debug-info")
@@ -1933,6 +2029,9 @@ async def debug_info():
             "material_source": "database",
             "material_parser": "grams, cm3, mm fallback",
             "setup_cost_per_plate_internal": SETUP_COST_PER_PLATE,
+            "slicer_plate_timeout_seconds": SLICER_PLATE_TIMEOUT_SECONDS,
+            "slicer_individual_timeout_seconds": SLICER_INDIVIDUAL_TIMEOUT_SECONDS,
+            "individual_fallback_time_correction": INDIVIDUAL_FALLBACK_TIME_CORRECTION,
             "grouping_rule": "different material or different print profile = separate sliced plate group",
         }
     except Exception as exc:
@@ -2028,7 +2127,24 @@ async def slice_batch(
                 gcode_path = tmp_dir / f"group_{group_index}_plate_{plate_index}.gcode"
 
                 export_plate_stl(plate, plate_stl)
-                stats = slice_plate(slicer, plate_stl, gcode_path, group)
+
+                try:
+                    stats = slice_plate(
+                        slicer=slicer,
+                        plate_stl=plate_stl,
+                        gcode_path=gcode_path,
+                        group=group,
+                        timeout_seconds=SLICER_PLATE_TIMEOUT_SECONDS,
+                    )
+                except SlicerTimeoutError:
+                    stats = slice_plate_individually_after_timeout(
+                        slicer=slicer,
+                        plate=plate,
+                        tmp_dir=tmp_dir,
+                        group=group,
+                        group_index=group_index,
+                        plate_index=plate_index,
+                    )
 
                 filament_g = float(stats["filamentGrams"])
                 print_hours = float(stats["printHours"])
@@ -2050,6 +2166,11 @@ async def slice_batch(
                     "pieces": len(plate["placements"]),
                     "filamentGrams": filament_g,
                     "printHours": print_hours,
+                    "rawPrintHours": stats.get("rawPrintHours", print_hours),
+                    "fallbackUsed": bool(stats.get("fallbackUsed", False)),
+                    "fallbackReason": stats.get("fallbackReason", ""),
+                    "timeCorrectionFactor": stats.get("timeCorrectionFactor", 1.0),
+                    "individualPieces": stats.get("pieces", []),
                     "setupApplied": True,
                 })
 
@@ -2180,7 +2301,7 @@ async def public_materials():
             SELECT *
             FROM material_catalog
             WHERE is_active = 1 AND is_out_of_stock = 0
-            ORDER BY CASE WHEN UPPER(material_key) = 'PLA' THEN 0 ELSE 1 END, name
+            ORDER BY name
             """
         ).fetchall()
 
@@ -2192,7 +2313,7 @@ async def public_materials():
                 SELECT color_name
                 FROM material_colors
                 WHERE material_id = ? AND is_active = 1 AND is_out_of_stock = 0
-                ORDER BY CASE WHEN LOWER(color_name) = 'blanco' THEN 0 WHEN LOWER(color_name) = 'white' THEN 0 ELSE 1 END, color_name
+                ORDER BY color_name
                 """,
                 (material["id"],),
             ).fetchall()
@@ -2220,14 +2341,14 @@ async def admin_materials(request: Request):
 
     with get_db() as conn:
         materials = conn.execute(
-            "SELECT * FROM material_catalog ORDER BY CASE WHEN UPPER(material_key) = 'PLA' THEN 0 ELSE 1 END, name"
+            "SELECT * FROM material_catalog ORDER BY name"
         ).fetchall()
 
         result = []
 
         for material in materials:
             colors = conn.execute(
-                "SELECT * FROM material_colors WHERE material_id = ? ORDER BY CASE WHEN LOWER(color_name) = 'blanco' THEN 0 WHEN LOWER(color_name) = 'white' THEN 0 ELSE 1 END, color_name",
+                "SELECT * FROM material_colors WHERE material_id = ? ORDER BY color_name",
                 (material["id"],),
             ).fetchall()
 

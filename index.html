@@ -292,6 +292,44 @@
       margin-bottom: 14px;
     }
 
+
+    .object-head-left {
+      display: flex;
+      gap: 12px;
+      align-items: center;
+      min-width: 0;
+    }
+
+    .model-thumb {
+      width: 82px;
+      height: 64px;
+      border-radius: 14px;
+      border: 1px solid var(--line);
+      background:
+        linear-gradient(135deg, #f8fafc, #e2e8f0);
+      display: grid;
+      place-items: center;
+      overflow: hidden;
+      flex: 0 0 auto;
+    }
+
+    .model-thumb img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      display: block;
+    }
+
+    .model-thumb-placeholder {
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 850;
+      text-align: center;
+      padding: 6px;
+      line-height: 1.25;
+    }
+
+
     .object-title {
       font-weight: 900;
       word-break: break-word;
@@ -1004,37 +1042,6 @@
       }
     }
 
-    function getDefaultMaterialKey() {
-      const keys = Object.keys(MATERIALS);
-
-      if (MATERIALS.PLA) {
-        return "PLA";
-      }
-
-      const plaKey = keys.find((key) => key.toUpperCase() === "PLA");
-      if (plaKey) {
-        return plaKey;
-      }
-
-      return keys[0] || "";
-    }
-
-    function getDefaultColorForMaterial(materialKey) {
-      const colors = MATERIALS[materialKey]?.colors || [];
-
-      const blanco = colors.find((color) => color.toLowerCase() === "blanco");
-      if (blanco) {
-        return blanco;
-      }
-
-      const white = colors.find((color) => color.toLowerCase() === "white");
-      if (white) {
-        return white;
-      }
-
-      return colors[0] || "";
-    }
-
     const BASIC_USES = {
       functional: {
         label: "Pieza funcional",
@@ -1404,7 +1411,7 @@
 
     function createObjectRecord(file) {
       const ext = getFileExtension(file.name);
-      const materialKey = getDefaultMaterialKey();
+      const materialKey = Object.keys(MATERIALS)[0];
 
       if (!materialKey) {
         throw new Error("No hay materiales disponibles para cotizar.");
@@ -1418,7 +1425,7 @@
         sizeBytes: file.size,
         quantity: 1,
         materialKey,
-        color: getDefaultColorForMaterial(materialKey),
+        color: MATERIALS[materialKey].colors[0],
         mode: "basic",
         useCase: "functional",
         advanced: {
@@ -1433,6 +1440,7 @@
         warning: "",
         geometry: null,
         template: null,
+        thumbnailDataUrl: "",
         slicerEstimate: null
       };
     }
@@ -1485,10 +1493,19 @@
         return `
           <div class="object-card" data-object-id="${obj.id}">
             <div class="object-head">
-              <div>
-                <div class="object-title">${index + 1}. ${obj.name}</div>
-                <div class="object-meta">
-                  ${(obj.sizeBytes / (1024 * 1024)).toFixed(2)} MB · ${obj.ext.toUpperCase()}
+              <div class="object-head-left">
+                <div class="model-thumb" aria-label="Vista previa fija del modelo">
+                  ${
+                    obj.thumbnailDataUrl
+                      ? `<img src="${obj.thumbnailDataUrl}" alt="Miniatura isométrica de ${obj.name}">`
+                      : `<div class="model-thumb-placeholder">${obj.loading ? "Generando vista" : "Sin vista"}</div>`
+                  }
+                </div>
+                <div>
+                  <div class="object-title">${index + 1}. ${obj.name}</div>
+                  <div class="object-meta">
+                    ${(obj.sizeBytes / (1024 * 1024)).toFixed(2)} MB · ${obj.ext.toUpperCase()}
+                  </div>
                 </div>
               </div>
               <button class="remove-btn" data-action="remove" data-id="${obj.id}" type="button">Quitar</button>
@@ -1613,7 +1630,7 @@
 
         if (action === "material") {
           obj.materialKey = target.value;
-          obj.color = getDefaultColorForMaterial(obj.materialKey);
+          obj.color = MATERIALS[obj.materialKey]?.colors?.[0] || "";
         }
 
         if (action === "color") obj.color = target.value;
@@ -2152,8 +2169,12 @@
       $("totalMaterial").textContent = ready ? `${totals.totalMaterial.toFixed(0)} g` : "—";
       $("totalHours").textContent = ready ? formatDurationFromHours(totals.totalHours) : "—";
 
+      const fallbackUsed = ready && state.slicer.jobEstimate?.plates?.some((plate) => plate.fallbackUsed);
+
       $("priceSub").textContent = ready
-        ? `Cotización actualizada · ${totals.totalPieces} pieza${totals.totalPieces !== 1 ? "s" : ""}`
+        ? fallbackUsed
+          ? `Cotización actualizada · cálculo individual aplicado`
+          : `Cotización actualizada · ${totals.totalPieces} pieza${totals.totalPieces !== 1 ? "s" : ""}`
         : "Procesando cotización con slicer...";
 
       const slicerStatus = $("slicerStatusText");
@@ -2656,6 +2677,84 @@
           });
         }
       });
+    }
+
+    function applyThumbnailMaterial(object) {
+      object.traverse((child) => {
+        if (!child.isMesh) return;
+
+        child.material = new THREE.MeshStandardMaterial({
+          color: 0x64748b,
+          metalness: 0.06,
+          roughness: 0.58
+        });
+      });
+    }
+
+    function createStaticThumbnail(object) {
+      /*
+        Fixed lightweight isometric image.
+        It is intentionally independent from selected material/color so that it
+        remains a stable file identifier for the customer.
+      */
+      const width = 180;
+      const height = 140;
+
+      const thumbScene = new THREE.Scene();
+      thumbScene.background = new THREE.Color(0xf8fafc);
+
+      const thumbCamera = new THREE.PerspectiveCamera(38, width / height, 0.1, 100000);
+      const thumbRenderer = new THREE.WebGLRenderer({
+        antialias: true,
+        preserveDrawingBuffer: true,
+        alpha: false
+      });
+
+      thumbRenderer.setSize(width, height, false);
+      thumbRenderer.setPixelRatio(1);
+
+      const clone = object.clone(true);
+      applyThumbnailMaterial(clone);
+
+      const box = new THREE.Box3().setFromObject(clone);
+      const size = new THREE.Vector3();
+      const center = new THREE.Vector3();
+      box.getSize(size);
+      box.getCenter(center);
+
+      clone.position.sub(center);
+      thumbScene.add(clone);
+
+      const maxDim = Math.max(size.x, size.y, size.z, 1);
+      const distance = maxDim * 2.25;
+
+      thumbCamera.position.set(distance, distance * 0.75, distance);
+      thumbCamera.lookAt(0, 0, 0);
+
+      const ambient = new THREE.AmbientLight(0xffffff, 0.82);
+      thumbScene.add(ambient);
+
+      const key = new THREE.DirectionalLight(0xffffff, 1.2);
+      key.position.set(distance, distance, distance);
+      thumbScene.add(key);
+
+      const fill = new THREE.DirectionalLight(0x93c5fd, 0.45);
+      fill.position.set(-distance, distance * 0.4, distance * 0.6);
+      thumbScene.add(fill);
+
+      thumbRenderer.render(thumbScene, thumbCamera);
+
+      let dataUrl;
+      try {
+        dataUrl = thumbRenderer.domElement.toDataURL("image/webp", 0.72);
+      } catch (error) {
+        dataUrl = thumbRenderer.domElement.toDataURL("image/png");
+      }
+
+      thumbRenderer.dispose();
+      disposeObject(clone);
+
+      return dataUrl;
     }
 
     function disposeObject(object) {
@@ -3211,6 +3310,7 @@
 
         record.geometry = analysis;
         record.template = object;
+        record.thumbnailDataUrl = createStaticThumbnail(object);
         record.loading = false;
 
         const currentGeometry = record.geometry || analysis;

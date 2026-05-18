@@ -3,18 +3,22 @@ import math
 import os
 import re
 import shutil
+import smtplib
+import sqlite3
 import subprocess
 import tempfile
+import uuid
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
+from email.message import EmailMessage
 
 import numpy as np
 import trimesh
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, UploadFile, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, FileResponse
 
 
 APP_DIR = Path(__file__).resolve().parent
@@ -48,6 +52,270 @@ SETUP_COST_PER_PLATE = 100.0
 MINIMUM_QUOTE = 150.0
 
 
+
+DATABASE_PATH = Path(os.environ.get("DATABASE_PATH", APP_DIR / "data" / "prototiposrd.db"))
+UPLOAD_DIR = Path(os.environ.get("UPLOAD_DIR", APP_DIR / "data" / "uploads"))
+ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "admin123")
+
+SMTP_HOST = os.environ.get("SMTP_HOST", "")
+SMTP_PORT = int(os.environ.get("SMTP_PORT", "587"))
+SMTP_USER = os.environ.get("SMTP_USER", "")
+SMTP_PASSWORD = os.environ.get("SMTP_PASSWORD", "")
+SMTP_FROM = os.environ.get("SMTP_FROM", SMTP_USER or "no-reply@prototiposrd.com")
+SMTP_USE_TLS = os.environ.get("SMTP_USE_TLS", "true").lower() == "true"
+ADMIN_NOTIFICATION_EMAIL = os.environ.get("ADMIN_NOTIFICATION_EMAIL", "")
+
+
+def get_db() -> sqlite3.Connection:
+    DATABASE_PATH.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(DATABASE_PATH)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA foreign_keys = ON")
+    return conn
+
+
+def init_db() -> None:
+    UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+
+    with get_db() as conn:
+        conn.executescript(
+            """
+            CREATE TABLE IF NOT EXISTS quote_requests (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                request_code TEXT NOT NULL UNIQUE,
+                status TEXT NOT NULL DEFAULT 'new',
+                customer_name TEXT,
+                customer_email TEXT NOT NULL,
+                customer_phone TEXT NOT NULL,
+                customer_notes TEXT,
+                quote_metadata TEXT NOT NULL,
+                quote_result TEXT NOT NULL,
+                total_price REAL NOT NULL,
+                total_pieces INTEGER NOT NULL,
+                total_plates INTEGER NOT NULL,
+                total_print_hours REAL NOT NULL,
+                total_filament_grams REAL NOT NULL,
+                correction_token TEXT,
+                correction_reason TEXT,
+                correction_requested_at TEXT,
+                commitment_date TEXT,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE TABLE IF NOT EXISTS quote_files (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                request_id INTEGER NOT NULL,
+                original_filename TEXT NOT NULL,
+                stored_filename TEXT NOT NULL,
+                content_type TEXT,
+                size_bytes INTEGER NOT NULL,
+                source TEXT NOT NULL DEFAULT 'original',
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (request_id) REFERENCES quote_requests(id)
+            );
+
+            CREATE TABLE IF NOT EXISTS quote_logs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                request_id INTEGER NOT NULL,
+                action TEXT NOT NULL,
+                actor TEXT NOT NULL DEFAULT 'system',
+                note TEXT,
+                from_status TEXT,
+                to_status TEXT,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (request_id) REFERENCES quote_requests(id)
+            );
+            """
+        )
+
+        existing_request_cols = {
+            row["name"] for row in conn.execute("PRAGMA table_info(quote_requests)").fetchall()
+        }
+        if "correction_token" not in existing_request_cols:
+            conn.execute("ALTER TABLE quote_requests ADD COLUMN correction_token TEXT")
+        if "correction_reason" not in existing_request_cols:
+            conn.execute("ALTER TABLE quote_requests ADD COLUMN correction_reason TEXT")
+        if "correction_requested_at" not in existing_request_cols:
+            conn.execute("ALTER TABLE quote_requests ADD COLUMN correction_requested_at TEXT")
+        if "commitment_date" not in existing_request_cols:
+            conn.execute("ALTER TABLE quote_requests ADD COLUMN commitment_date TEXT")
+
+        existing_file_cols = {
+            row["name"] for row in conn.execute("PRAGMA table_info(quote_files)").fetchall()
+        }
+        if "source" not in existing_file_cols:
+            conn.execute("ALTER TABLE quote_files ADD COLUMN source TEXT NOT NULL DEFAULT 'original'")
+
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_quote_requests_correction_token ON quote_requests(correction_token)")
+
+
+def require_admin(request: Request) -> None:
+    supplied = request.headers.get("X-Admin-Password", "")
+    if not ADMIN_PASSWORD or supplied != ADMIN_PASSWORD:
+        raise HTTPException(status_code=401, detail="No autorizado")
+
+
+def row_to_dict(row: sqlite3.Row) -> dict:
+    return {key: row[key] for key in row.keys()}
+
+
+def request_to_public_dict(row: sqlite3.Row, files: list[dict], logs: list[dict]) -> dict:
+    data = row_to_dict(row)
+
+    for field in ["quote_metadata", "quote_result"]:
+        try:
+            data[field] = json.loads(data[field])
+        except Exception:
+            data[field] = {}
+
+    data["files"] = files
+    data["logs"] = logs
+    return data
+
+
+def save_upload_file_for_request(
+    conn: sqlite3.Connection,
+    request_id: int,
+    request_code: str,
+    upload: UploadFile,
+    source: str = "original",
+) -> dict:
+    request_dir = UPLOAD_DIR / request_code
+    request_dir.mkdir(parents=True, exist_ok=True)
+
+    original = Path(upload.filename or "archivo").name
+    stored = f"{uuid.uuid4().hex}_{original}"
+    path = request_dir / stored
+
+    # This function is used from async routes only after read() externally for safety.
+    raise RuntimeError("Use save_upload_bytes_for_request instead.")
+
+
+def save_upload_bytes_for_request(
+    conn: sqlite3.Connection,
+    request_id: int,
+    request_code: str,
+    original_filename: str,
+    content: bytes,
+    content_type: str = "",
+    source: str = "original",
+) -> int:
+    request_dir = UPLOAD_DIR / request_code
+    request_dir.mkdir(parents=True, exist_ok=True)
+
+    original = Path(original_filename or "archivo").name
+    stored = f"{uuid.uuid4().hex}_{original}"
+    path = request_dir / stored
+    path.write_bytes(content)
+
+    cursor = conn.execute(
+        """
+        INSERT INTO quote_files (
+            request_id, original_filename, stored_filename, content_type, size_bytes, source
+        )
+        VALUES (?, ?, ?, ?, ?, ?)
+        """,
+        (request_id, original, str(path.relative_to(UPLOAD_DIR)), content_type or "", len(content), source),
+    )
+
+    return int(cursor.lastrowid)
+
+
+
+def send_email(to_email: str, subject: str, body: str) -> bool:
+    if not SMTP_HOST or not SMTP_USER or not SMTP_PASSWORD or not to_email:
+        print("[email] SMTP no configurado; correo no enviado.", flush=True)
+        return False
+
+    msg = EmailMessage()
+    msg["From"] = SMTP_FROM
+    msg["To"] = to_email
+    msg["Subject"] = subject
+    msg.set_content(body)
+
+    try:
+        with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=30) as smtp:
+            if SMTP_USE_TLS:
+                smtp.starttls()
+            smtp.login(SMTP_USER, SMTP_PASSWORD)
+            smtp.send_message(msg)
+        return True
+    except Exception as exc:
+        print(f"[email] Error enviando correo a {to_email}: {exc}", flush=True)
+        return False
+
+
+def app_base_url(request: Request) -> str:
+    configured = os.environ.get("PUBLIC_BASE_URL", "").strip().rstrip("/")
+    if configured:
+        return configured
+    return str(request.base_url).rstrip("/")
+
+
+def build_correction_email_body(
+    request_code: str,
+    customer_name: str,
+    reason: str,
+    correction_url: str,
+) -> str:
+    return "\n".join([
+        f"Hola {customer_name or 'cliente'},",
+        "",
+        "Tu solicitud de cotización en PrototiposRD necesita una corrección antes de continuar.",
+        "",
+        f"Número de solicitud: {request_code}",
+        "",
+        "Razón de la corrección:",
+        reason,
+        "",
+        "Puedes subir el archivo corregido en este enlace:",
+        correction_url,
+        "",
+        "Cuando lo recibamos, el equipo revisará nuevamente la solicitud.",
+        "",
+        "PrototiposRD",
+        "Reymildo Jiménez 2026",
+    ])
+
+
+def build_customer_email_body(request_code: str, customer_name: str, quote_result: dict, quote_metadata: list[dict]) -> str:
+    total_price = float(quote_result.get("totalPrice", 0))
+    total_pieces = int(quote_result.get("totalPieces", 0))
+    total_plates = int(quote_result.get("totalPlates", 0))
+    total_hours = float(quote_result.get("totalPrintHours", 0))
+
+    lines = [
+        f"Hola {customer_name or 'cliente'},",
+        "",
+        "Recibimos tu solicitud de cotización en PrototiposRD.",
+        "",
+        f"Número de solicitud: {request_code}",
+        f"Total estimado: RD$ {total_price:,.2f}",
+        f"Piezas: {total_pieces}",
+        f"Lotes de producción: {total_plates}",
+        f"Tiempo estimado: {total_hours:.2f} horas",
+        "",
+        "Archivos / piezas:",
+    ]
+
+    for item in quote_metadata:
+        lines.append(
+            f"- {item.get('filename', 'archivo')} · {item.get('quantity', 1)} unidad(es) · "
+            f"{item.get('material', '')} · {item.get('color', '')}"
+        )
+
+    lines += [
+        "",
+        "Nuestro equipo revisará la solicitud antes de confirmar producción.",
+        "",
+        "PrototiposRD",
+        "Reymildo Jiménez 2026",
+    ]
+
+    return "\n".join(lines)
+
+
 app = FastAPI(title="Cotizador 3D Backend - Slicing por cama completa")
 
 app.add_middleware(
@@ -57,6 +325,11 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.on_event("startup")
+async def startup_event():
+    init_db()
 
 
 @app.exception_handler(HTTPException)
@@ -1453,6 +1726,394 @@ async def slice_batch(
         "totalPlates": total_plates,
         "plates": plate_results,
     }
+
+
+@app.post("/api/quote-requests")
+async def create_quote_request(
+    customer_name: str = Form(""),
+    customer_email: str = Form(...),
+    customer_phone: str = Form(...),
+    customer_notes: str = Form(""),
+    quote_metadata: str = Form(...),
+    quote_result: str = Form(...),
+    files: list[UploadFile] = File(default=[]),
+):
+    try:
+        metadata = json.loads(quote_metadata)
+        result = json.loads(quote_result)
+    except json.JSONDecodeError:
+        raise HTTPException(status_code=400, detail="Datos de cotización inválidos.")
+
+    if not customer_email.strip() or not customer_phone.strip():
+        raise HTTPException(status_code=400, detail="Correo y teléfono son obligatorios.")
+
+    total_price = float(result.get("totalPrice", 0))
+    total_pieces = int(result.get("totalPieces", 0))
+    total_plates = int(result.get("totalPlates", 0))
+    total_print_hours = float(result.get("totalPrintHours", 0))
+    total_filament_grams = float(result.get("totalFilamentGrams", 0))
+
+    if total_price <= 0 or total_print_hours <= 0 or total_filament_grams <= 0:
+        raise HTTPException(status_code=400, detail="La cotización debe tener un resultado válido del slicer.")
+
+    request_code = f"PRD-{uuid.uuid4().hex[:8].upper()}"
+
+    with get_db() as conn:
+        cursor = conn.execute(
+            """
+            INSERT INTO quote_requests (
+                request_code, status, customer_name, customer_email, customer_phone,
+                customer_notes, quote_metadata, quote_result, total_price,
+                total_pieces, total_plates, total_print_hours, total_filament_grams
+            )
+            VALUES (?, 'new', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                request_code,
+                customer_name.strip(),
+                customer_email.strip(),
+                customer_phone.strip(),
+                customer_notes.strip(),
+                json.dumps(metadata, ensure_ascii=False),
+                json.dumps(result, ensure_ascii=False),
+                total_price,
+                total_pieces,
+                total_plates,
+                total_print_hours,
+                total_filament_grams,
+            ),
+        )
+        request_id = int(cursor.lastrowid)
+
+        for upload in files:
+            content = await upload.read()
+            save_upload_bytes_for_request(
+                conn=conn,
+                request_id=request_id,
+                request_code=request_code,
+                original_filename=upload.filename or "archivo",
+                content=content,
+                content_type=upload.content_type or "",
+                source="original",
+            )
+
+        conn.execute(
+            """
+            INSERT INTO quote_logs (request_id, action, actor, note, from_status, to_status)
+            VALUES (?, 'created', 'customer', 'Solicitud creada desde la página web.', NULL, 'new')
+            """,
+            (request_id,),
+        )
+
+    body = build_customer_email_body(request_code, customer_name.strip(), result, metadata if isinstance(metadata, list) else [])
+    sent_customer = send_email(customer_email.strip(), f"PrototiposRD · Solicitud {request_code}", body)
+
+    if ADMIN_NOTIFICATION_EMAIL:
+        send_email(
+            ADMIN_NOTIFICATION_EMAIL,
+            f"Nueva solicitud PrototiposRD {request_code}",
+            f"Se recibió una nueva solicitud.\n\nCódigo: {request_code}\nCliente: {customer_name}\nCorreo: {customer_email}\nTeléfono: {customer_phone}\nTotal estimado: RD$ {total_price:,.2f}"
+        )
+
+    with get_db() as conn:
+        conn.execute(
+            """
+            INSERT INTO quote_logs (request_id, action, actor, note, from_status, to_status)
+            VALUES (?, 'email_customer_copy', 'system', ?, 'new', 'new')
+            """,
+            (request_id, "Correo enviado al cliente." if sent_customer else "SMTP no configurado o envío fallido."),
+        )
+
+    return {
+        "ok": True,
+        "request_id": request_id,
+        "request_code": request_code,
+        "email_sent": sent_customer,
+    }
+
+
+@app.get("/api/admin/requests")
+async def admin_list_requests(request: Request, status: str = "", q: str = ""):
+    require_admin(request)
+
+    clauses = []
+    params = []
+
+    if status:
+        clauses.append("status = ?")
+        params.append(status)
+
+    if q:
+        like = f"%{q}%"
+        clauses.append("(request_code LIKE ? OR customer_name LIKE ? OR customer_email LIKE ? OR customer_phone LIKE ?)")
+        params.extend([like, like, like, like])
+
+    where = "WHERE " + " AND ".join(clauses) if clauses else ""
+
+    with get_db() as conn:
+        rows = conn.execute(
+            f"""
+            SELECT * FROM quote_requests
+            {where}
+            ORDER BY created_at DESC
+            LIMIT 200
+            """,
+            params,
+        ).fetchall()
+
+        requests = []
+
+        for row in rows:
+            request_id = row["id"]
+            files = [row_to_dict(file_row) for file_row in conn.execute(
+                "SELECT id, original_filename, stored_filename, content_type, size_bytes, created_at FROM quote_files WHERE request_id = ? ORDER BY id",
+                (request_id,),
+            ).fetchall()]
+            logs = [row_to_dict(log_row) for log_row in conn.execute(
+                "SELECT action, actor, note, from_status, to_status, created_at FROM quote_logs WHERE request_id = ? ORDER BY id",
+                (request_id,),
+            ).fetchall()]
+            requests.append(request_to_public_dict(row, files, logs))
+
+    return {"requests": requests}
+
+
+
+@app.get("/api/admin/files/{file_id}")
+async def admin_download_file(file_id: int, request: Request):
+    require_admin(request)
+
+    with get_db() as conn:
+        row = conn.execute(
+            """
+            SELECT f.*, r.request_code
+            FROM quote_files f
+            JOIN quote_requests r ON r.id = f.request_id
+            WHERE f.id = ?
+            """,
+            (file_id,),
+        ).fetchone()
+
+    if not row:
+        raise HTTPException(status_code=404, detail="Archivo no encontrado.")
+
+    path = UPLOAD_DIR / row["stored_filename"]
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="Archivo no existe en disco.")
+
+    return FileResponse(
+        path,
+        filename=row["original_filename"],
+        media_type=row["content_type"] or "application/octet-stream",
+    )
+
+
+@app.get("/correction/{token}")
+async def correction_page(token: str):
+    return FileResponse(APP_DIR / "correction.html")
+
+
+@app.get("/api/corrections/{token}")
+async def get_correction_request(token: str):
+    with get_db() as conn:
+        row = conn.execute(
+            """
+            SELECT id, request_code, status, correction_reason
+            FROM quote_requests
+            WHERE correction_token = ?
+            """,
+            (token,),
+        ).fetchone()
+
+    if not row:
+        raise HTTPException(status_code=404, detail="Enlace de corrección inválido.")
+
+    return {
+        "request_code": row["request_code"],
+        "status": row["status"],
+        "correction_reason": row["correction_reason"] or "",
+    }
+
+
+@app.post("/api/corrections/{token}/files")
+async def upload_correction_files(
+    token: str,
+    message: str = Form(""),
+    files: list[UploadFile] = File(...),
+):
+    if not files:
+        raise HTTPException(status_code=400, detail="Debes subir al menos un archivo.")
+
+    with get_db() as conn:
+        row = conn.execute(
+            "SELECT * FROM quote_requests WHERE correction_token = ?",
+            (token,),
+        ).fetchone()
+
+        if not row:
+            raise HTTPException(status_code=404, detail="Enlace de corrección inválido.")
+
+        request_id = row["id"]
+        request_code = row["request_code"]
+
+        saved_count = 0
+
+        for upload in files:
+            content = await upload.read()
+            save_upload_bytes_for_request(
+                conn=conn,
+                request_id=request_id,
+                request_code=request_code,
+                original_filename=upload.filename or "archivo",
+                content=content,
+                content_type=upload.content_type or "",
+                source="correction",
+            )
+            saved_count += 1
+
+        old_status = row["status"]
+
+        conn.execute(
+            """
+            UPDATE quote_requests
+            SET status = 'new',
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+            """,
+            (request_id,),
+        )
+
+        note = f"Cliente subió {saved_count} archivo(s) corregido(s)."
+        if message:
+            note += f" Mensaje: {message}"
+
+        conn.execute(
+            """
+            INSERT INTO quote_logs (request_id, action, actor, note, from_status, to_status)
+            VALUES (?, 'correction_uploaded', 'customer', ?, ?, 'new')
+            """,
+            (request_id, note, old_status),
+        )
+
+    return {"ok": True, "saved_files": saved_count}
+
+
+@app.post("/api/admin/requests/{request_id}/status")
+async def admin_update_request_status(request_id: int, request: Request):
+    require_admin(request)
+
+    payload = await request.json()
+    new_status = payload.get("status", "")
+    note = payload.get("note", "")
+    commitment_date = str(payload.get("commitment_date", "") or "").strip()
+    notify_customer = bool(payload.get("notify_customer", False))
+
+    allowed = {"accepted", "correction", "rejected", "ignored", "new"}
+    if new_status not in allowed:
+        raise HTTPException(status_code=400, detail="Estado inválido.")
+
+    correction_url = ""
+    email_sent = False
+
+    with get_db() as conn:
+        row = conn.execute("SELECT * FROM quote_requests WHERE id = ?", (request_id,)).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Solicitud no encontrada.")
+
+        old_status = row["status"]
+        correction_token = row["correction_token"]
+
+        if new_status == "correction":
+            if not note.strip():
+                raise HTTPException(status_code=400, detail="Debes escribir la razón de la corrección.")
+
+            if not correction_token:
+                correction_token = uuid.uuid4().hex
+
+            correction_url = f"{app_base_url(request)}/correction/{correction_token}"
+
+            conn.execute(
+                """
+                UPDATE quote_requests
+                SET status = ?,
+                    correction_token = ?,
+                    correction_reason = ?,
+                    correction_requested_at = CURRENT_TIMESTAMP,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+                """,
+                (new_status, correction_token, note, request_id),
+            )
+        elif new_status == "accepted":
+            conn.execute(
+                """
+                UPDATE quote_requests
+                SET status = ?,
+                    commitment_date = ?,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+                """,
+                (new_status, commitment_date or None, request_id),
+            )
+
+            if commitment_date:
+                note = (note + "\n" if note else "") + f"Fecha compromiso: {commitment_date}"
+        else:
+            conn.execute(
+                "UPDATE quote_requests SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                (new_status, request_id),
+            )
+
+        conn.execute(
+            """
+            INSERT INTO quote_logs (request_id, action, actor, note, from_status, to_status)
+            VALUES (?, 'status_changed', 'admin', ?, ?, ?)
+            """,
+            (request_id, note, old_status, new_status),
+        )
+
+        # Need values after DB writes, but before connection closes.
+        customer_email = row["customer_email"]
+        customer_name = row["customer_name"]
+        request_code = row["request_code"]
+
+    if new_status == "correction" and notify_customer:
+        body = build_correction_email_body(
+            request_code=request_code,
+            customer_name=customer_name,
+            reason=note,
+            correction_url=correction_url,
+        )
+        email_sent = send_email(
+            customer_email,
+            f"PrototiposRD · Corrección requerida {request_code}",
+            body,
+        )
+
+        with get_db() as conn:
+            conn.execute(
+                """
+                INSERT INTO quote_logs (request_id, action, actor, note, from_status, to_status)
+                VALUES (?, 'correction_email', 'system', ?, 'correction', 'correction')
+                """,
+                (
+                    request_id,
+                    "Correo de corrección enviado al cliente."
+                    if email_sent
+                    else "No se pudo enviar correo de corrección o SMTP no está configurado.",
+                ),
+            )
+
+    return {
+        "ok": True,
+        "correction_url": correction_url,
+        "email_sent": email_sent,
+    }
+
+
+@app.get("/admin")
+async def admin_page():
+    return FileResponse(APP_DIR / "admin.html")
 
 
 app.mount("/", StaticFiles(directory=APP_DIR, html=True), name="static")

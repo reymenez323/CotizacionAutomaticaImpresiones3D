@@ -1,0 +1,258 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>PrototiposRD | Subir corrección</title>
+  <style>
+    :root {
+      --bg: #f4f6f8;
+      --panel: #ffffff;
+      --ink: #111827;
+      --muted: #64748b;
+      --line: #e5e7eb;
+      --accent: #2563eb;
+      --good: #047857;
+      --good-bg: #ecfdf5;
+      --bad: #b91c1c;
+      --bad-bg: #fef2f2;
+      --shadow: 0 20px 55px rgba(15, 23, 42, 0.1);
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: radial-gradient(circle at top left, #dbeafe 0, transparent 34%), var(--bg);
+      color: var(--ink);
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      padding: 22px;
+    }
+
+    .card {
+      width: min(720px, 100%);
+      background: white;
+      border-radius: 30px;
+      box-shadow: var(--shadow);
+      border: 1px solid var(--line);
+      overflow: hidden;
+    }
+
+    .top {
+      background: linear-gradient(135deg, #020617, #1d4ed8);
+      color: white;
+      padding: 28px;
+    }
+
+    h1 { margin: 0 0 8px; font-size: clamp(28px, 5vw, 42px); letter-spacing: -0.04em; }
+    .top p { margin: 0; color: #dbeafe; line-height: 1.55; }
+
+    .body {
+      padding: 26px;
+      display: grid;
+      gap: 16px;
+    }
+
+    label {
+      font-weight: 850;
+      color: #334155;
+      display: block;
+      margin-bottom: 8px;
+    }
+
+    input, textarea {
+      width: 100%;
+      border: 1px solid #cbd5e1;
+      border-radius: 16px;
+      padding: 13px 14px;
+      font-size: 15px;
+      outline: none;
+    }
+
+    textarea {
+      min-height: 96px;
+      resize: vertical;
+      font-family: inherit;
+    }
+
+    button {
+      border: none;
+      border-radius: 18px;
+      padding: 15px 18px;
+      font-weight: 900;
+      cursor: pointer;
+      background: var(--accent);
+      color: white;
+      font-size: 16px;
+    }
+
+    .notice {
+      border-radius: 16px;
+      padding: 13px 14px;
+      line-height: 1.5;
+      font-weight: 700;
+      background: #fffbeb;
+      color: #92400e;
+      border: 1px solid #fde68a;
+    }
+
+    .good {
+      background: var(--good-bg);
+      color: var(--good);
+      border-color: #a7f3d0;
+    }
+
+    .bad {
+      background: var(--bad-bg);
+      color: var(--bad);
+      border-color: #fecaca;
+    }
+
+    .hidden { display: none !important; }
+
+    .meta {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 12px;
+    }
+
+    .metric {
+      background: #f8fafc;
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      padding: 12px;
+    }
+
+    .metric small { display: block; color: var(--muted); margin-bottom: 4px; }
+    .metric strong { font-size: 18px; }
+
+    footer {
+      text-align: center;
+      color: var(--muted);
+      font-size: 13px;
+      padding: 0 0 20px;
+    }
+
+    @media (max-width: 640px) {
+      .meta { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <main class="card">
+    <section class="top">
+      <h1>Subir archivo corregido</h1>
+      <p>Esta página está vinculada a tu solicitud de PrototiposRD. Sube el archivo actualizado para que el equipo pueda revisarlo.</p>
+    </section>
+
+    <section class="body">
+      <div id="loading" class="notice">Cargando solicitud...</div>
+      <div id="requestInfo" class="hidden"></div>
+
+      <form id="correctionForm" class="hidden">
+        <div>
+          <label for="files">Archivo(s) corregido(s)</label>
+          <input id="files" name="files" type="file" multiple accept=".stl,.obj,.3mf,.step,.stp" />
+        </div>
+
+        <div>
+          <label for="message">Mensaje para el equipo</label>
+          <textarea id="message" placeholder="Describe qué cambiaste o cualquier detalle importante..."></textarea>
+        </div>
+
+        <div id="statusBox" class="notice hidden"></div>
+
+        <button id="submitBtn" type="submit">Enviar corrección</button>
+      </form>
+    </section>
+
+    <footer>Reymildo Jiménez 2026</footer>
+  </main>
+
+  <script>
+    const token = location.pathname.split("/").filter(Boolean).pop();
+    const loading = document.getElementById("loading");
+    const requestInfo = document.getElementById("requestInfo");
+    const form = document.getElementById("correctionForm");
+    const statusBox = document.getElementById("statusBox");
+    const submitBtn = document.getElementById("submitBtn");
+
+    async function loadCorrection() {
+      try {
+        const response = await fetch(`/api/corrections/${token}`);
+        const data = await response.json();
+
+        if (!response.ok) {
+          throw new Error(data.detail || "Enlace inválido o expirado.");
+        }
+
+        loading.classList.add("hidden");
+        requestInfo.classList.remove("hidden");
+        form.classList.remove("hidden");
+
+        requestInfo.innerHTML = `
+          <div class="meta">
+            <div class="metric"><small>Solicitud</small><strong>${data.request_code}</strong></div>
+            <div class="metric"><small>Estado</small><strong>${data.status}</strong></div>
+          </div>
+          ${data.correction_reason ? `<div class="notice"><strong>Razón de corrección:</strong><br>${data.correction_reason}</div>` : ""}
+        `;
+      } catch (error) {
+        loading.textContent = error.message;
+        loading.className = "notice bad";
+      }
+    }
+
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+
+      const files = document.getElementById("files").files;
+
+      if (!files.length) {
+        statusBox.textContent = "Debes subir al menos un archivo.";
+        statusBox.className = "notice bad";
+        statusBox.classList.remove("hidden");
+        return;
+      }
+
+      const formData = new FormData();
+      for (const file of files) {
+        formData.append("files", file, file.name);
+      }
+      formData.append("message", document.getElementById("message").value.trim());
+
+      try {
+        submitBtn.disabled = true;
+        statusBox.textContent = "Subiendo archivos...";
+        statusBox.className = "notice";
+        statusBox.classList.remove("hidden");
+
+        const response = await fetch(`/api/corrections/${token}/files`, {
+          method: "POST",
+          body: formData
+        });
+
+        const data = await response.json();
+
+        if (!response.ok) {
+          throw new Error(data.detail || "No se pudo subir la corrección.");
+        }
+
+        statusBox.textContent = "Corrección enviada correctamente. El equipo de PrototiposRD revisará los archivos.";
+        statusBox.className = "notice good";
+        form.reset();
+      } catch (error) {
+        statusBox.textContent = error.message;
+        statusBox.className = "notice bad";
+      } finally {
+        submitBtn.disabled = false;
+      }
+    });
+
+    loadCorrection();
+  </script>
+</body>
+</html>

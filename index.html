@@ -543,6 +543,135 @@
       transform: none;
     }
 
+
+    .modal-backdrop {
+      position: fixed;
+      inset: 0;
+      background:
+        radial-gradient(circle at top left, rgba(37, 99, 235, 0.24), transparent 38%),
+        rgba(15, 23, 42, 0.68);
+      display: grid;
+      place-items: center;
+      z-index: 9999;
+      padding: 20px;
+      backdrop-filter: blur(8px);
+    }
+
+    .modal-card {
+      width: min(620px, 100%);
+      background: linear-gradient(180deg, #ffffff, #f8fafc);
+      border-radius: 30px;
+      padding: 0;
+      box-shadow: 0 35px 110px rgba(15, 23, 42, 0.34);
+      border: 1px solid rgba(226, 232, 240, 0.95);
+      overflow: hidden;
+    }
+
+    .modal-top {
+      background: linear-gradient(135deg, #020617, #1d4ed8);
+      color: white;
+      padding: 24px 26px;
+    }
+
+    .modal-top h3 {
+      margin: 0 0 8px;
+      font-size: 27px;
+      letter-spacing: -0.035em;
+    }
+
+    .modal-top p {
+      margin: 0;
+      color: #dbeafe;
+      line-height: 1.55;
+    }
+
+    .modal-body {
+      padding: 24px 26px 26px;
+    }
+
+    .modal-grid {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+      gap: 16px;
+      align-items: start;
+    }
+
+    .modal-grid .full {
+      grid-column: 1 / -1;
+    }
+
+    .modal-card input,
+    .modal-card textarea {
+      background: white;
+      border: 1px solid #cbd5e1;
+      border-radius: 16px;
+      padding: 13px 14px;
+      font-size: 15px;
+      transition: 0.2s ease;
+    }
+
+    .modal-card textarea {
+      min-height: 92px;
+      resize: vertical;
+      font-family: inherit;
+    }
+
+    .modal-card input:focus,
+    .modal-card textarea:focus {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 4px rgba(37, 99, 235, 0.12);
+    }
+
+    .modal-actions {
+      display: grid;
+      grid-template-columns: 1fr 1.4fr;
+      gap: 12px;
+      margin-top: 20px;
+    }
+
+    .secondary-btn {
+      border: 1px solid #cbd5e1;
+      width: 100%;
+      background: white;
+      color: #334155;
+      border-radius: 18px;
+      padding: 14px;
+      font-size: 15px;
+      font-weight: 850;
+      cursor: pointer;
+      transition: 0.2s ease;
+    }
+
+    .secondary-btn:hover {
+      background: #f8fafc;
+      transform: translateY(-1px);
+    }
+
+    .success-box {
+      border-radius: 18px;
+      background: var(--good-bg);
+      color: var(--good);
+      padding: 14px;
+      line-height: 1.5;
+      font-weight: 700;
+      margin-top: 14px;
+      border: 1px solid #a7f3d0;
+    }
+
+
+    .modal-grid > .full,
+    .modal-field-full {
+      grid-column: 1 / -1 !important;
+      width: 100%;
+    }
+
+    .modal-field-full textarea,
+    #customerNotes {
+      width: 100% !important;
+      min-height: 118px;
+      display: block;
+    }
+
     .site-footer {
       text-align: center;
       color: var(--muted);
@@ -773,6 +902,47 @@
       </aside>
     </section>
 
+
+    <div id="quoteModal" class="modal-backdrop hidden">
+      <div class="modal-card">
+        <div class="modal-top">
+          <h3>Finalizar solicitud</h3>
+          <p>Completa tus datos para registrar la cotización. Recibirás una copia por correo y nuestro equipo podrá dar seguimiento desde el panel interno.</p>
+        </div>
+
+        <div class="modal-body">
+          <div class="modal-grid">
+            <div class="full">
+              <label class="field-label" for="customerName">Nombre o empresa</label>
+              <input id="customerName" type="text" placeholder="Ej. Reymildo Jiménez / PrototiposRD" autocomplete="name" />
+            </div>
+
+            <div>
+              <label class="field-label" for="customerEmail">Correo electrónico</label>
+              <input id="customerEmail" type="email" placeholder="correo@ejemplo.com" autocomplete="email" />
+            </div>
+
+            <div>
+              <label class="field-label" for="customerPhone">Teléfono / WhatsApp</label>
+              <input id="customerPhone" type="tel" placeholder="809-000-0000" autocomplete="tel" />
+            </div>
+
+            <div class="full modal-field-full">
+              <label class="field-label" for="customerNotes">Notas del proyecto</label>
+              <textarea id="customerNotes" placeholder="Uso de la pieza, urgencia, acabado deseado, tolerancias, observaciones..."></textarea>
+            </div>
+          </div>
+
+          <div id="quoteSubmitStatus" class="notice warn hidden"></div>
+
+          <div class="modal-actions">
+            <button id="cancelQuoteBtn" class="secondary-btn" type="button">Volver</button>
+            <button id="submitQuoteBtn" class="primary-btn" type="button">Enviar solicitud</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <footer class="site-footer">
       Reymildo Jiménez 2026
     </footer>
@@ -947,6 +1117,118 @@
         Number.isFinite(Number(state.slicer.jobEstimate.totalPrice)) &&
         Number(state.slicer.jobEstimate.totalPrice) > 0
       );
+    }
+
+    function showQuoteModal() {
+      const modal = $("quoteModal");
+      const status = $("quoteSubmitStatus");
+      if (status) {
+        status.textContent = "";
+        status.className = "notice warn hidden";
+      }
+      if (modal) modal.classList.remove("hidden");
+    }
+
+    function hideQuoteModal() {
+      const modal = $("quoteModal");
+      if (modal) modal.classList.add("hidden");
+    }
+
+    function buildQuoteMetadataForSubmission() {
+      return state.objects.map((obj) => {
+        const params = getParams(obj);
+        return {
+          id: obj.id,
+          filename: obj.name,
+          quantity: obj.quantity,
+          material: obj.materialKey,
+          color: obj.color,
+          mode: obj.mode,
+          useCase: obj.useCase,
+          infill: params.infill,
+          layerHeight: params.layerHeight,
+          walls: params.walls,
+          supports: params.supports,
+          ext: obj.ext
+        };
+      });
+    }
+
+    async function submitQuoteRequest() {
+      const totals = calculateTotals();
+      const status = $("quoteSubmitStatus");
+      const submitBtn = $("submitQuoteBtn");
+
+      if (!totals.ready) {
+        return;
+      }
+
+      const customerName = $("customerName").value.trim();
+      const customerEmail = $("customerEmail").value.trim();
+      const customerPhone = $("customerPhone").value.trim();
+      const customerNotes = $("customerNotes").value.trim();
+
+      if (!customerEmail || !customerPhone) {
+        status.textContent = "Correo y teléfono son obligatorios.";
+        status.className = "notice bad";
+        status.classList.remove("hidden");
+        return;
+      }
+
+      const formData = new FormData();
+
+      for (const obj of state.objects) {
+        if (obj.file) {
+          formData.append("files", obj.file, obj.name);
+        }
+      }
+
+      formData.append("customer_name", customerName);
+      formData.append("customer_email", customerEmail);
+      formData.append("customer_phone", customerPhone);
+      formData.append("customer_notes", customerNotes);
+      formData.append("quote_metadata", JSON.stringify(buildQuoteMetadataForSubmission()));
+      formData.append("quote_result", JSON.stringify({
+        totalPrice: totals.totalPrice,
+        totalPieces: totals.totalPieces,
+        totalPlates: totals.totalPlates,
+        totalPrintHours: totals.totalHours,
+        totalFilamentGrams: totals.totalMaterial,
+        source: totals.source,
+        slicer: state.slicer.jobEstimate || null
+      }));
+
+      try {
+        submitBtn.disabled = true;
+        status.textContent = "Enviando solicitud...";
+        status.className = "notice warn";
+        status.classList.remove("hidden");
+
+        const response = await fetch("/api/quote-requests", {
+          method: "POST",
+          body: formData
+        });
+
+        const data = await response.json();
+
+        if (!response.ok) {
+          const detail = data.detail || data.message || "No se pudo enviar la solicitud.";
+          throw new Error(typeof detail === "string" ? detail : JSON.stringify(detail));
+        }
+
+        status.textContent = `Solicitud enviada correctamente. Número de solicitud: ${data.request_code}.`;
+        status.className = "success-box";
+
+        setTimeout(() => {
+          hideQuoteModal();
+          submitBtn.disabled = false;
+        }, 2200);
+      } catch (error) {
+        status.textContent = error.message || "No se pudo enviar la solicitud.";
+        status.className = "notice bad";
+        status.classList.remove("hidden");
+        submitBtn.disabled = false;
+      }
     }
 
     function getFileExtension(filename = "") {
@@ -2081,19 +2363,11 @@
         return;
       }
 
-      const message = [
-        "Cotización preparada",
-        "",
-        `Total estimado: ${formatCurrency(totals.totalPrice)}`,
-        `Piezas: ${totals.totalPieces}`,
-        `Lotes de producción: ${totals.totalPlates}`,
-        `Tiempo estimado: ${formatDurationFromHours(totals.totalHours)}`,
-        "",
-        "El precio está sujeto a revisión final antes de iniciar producción."
-      ].join("\n");
-
-      alert(message);
+      showQuoteModal();
     });
+
+    $("cancelQuoteBtn").addEventListener("click", hideQuoteModal);
+    $("submitQuoteBtn").addEventListener("click", submitQuoteRequest);
 
     bindObjectListEvents();
     recalcAndRender(true);

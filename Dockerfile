@@ -24,6 +24,9 @@ COPY . .
 # Render provides PORT. Default is 10000.
 ENV PORT=10000
 ENV PRUSASLICER_PATH=/usr/bin/prusa-slicer
+ENV DATABASE_PATH=/app/data/prototiposrd.db
+ENV UPLOAD_DIR=/app/data/uploads
+ENV ADMIN_PASSWORD=admin123
 
 EXPOSE 10000
 

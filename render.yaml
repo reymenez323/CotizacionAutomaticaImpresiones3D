@@ -1,0 +1,11 @@
+services:
+  - type: web
+    name: prototiposrd-cotizador-3d
+    env: docker
+    plan: free
+    region: oregon
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /api/debug-info
+    envVars:
+      - key: PRUSASLICER_PATH
+        value: /usr/bin/prusa-slicer

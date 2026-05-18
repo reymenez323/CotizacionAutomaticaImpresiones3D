@@ -1,0 +1,2842 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>PrototiposRD | Cotización 3D instantánea</title>
+
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+        "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+      }
+    }
+  </script>
+
+  <style>
+    :root {
+      --bg: #f4f6f8;
+      --panel: #ffffff;
+      --ink: #111827;
+      --muted: #6b7280;
+      --line: #e5e7eb;
+      --dark: #0f172a;
+      --soft: #f1f5f9;
+      --accent: #2563eb;
+      --accent-dark: #1d4ed8;
+      --good: #047857;
+      --good-bg: #ecfdf5;
+      --warn: #92400e;
+      --warn-bg: #fffbeb;
+      --bad: #b91c1c;
+      --bad-bg: #fef2f2;
+      --shadow: 0 20px 50px rgba(15, 23, 42, 0.08);
+      --radius: 24px;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: radial-gradient(circle at top left, #dbeafe 0, transparent 34%), var(--bg);
+      color: var(--ink);
+    }
+
+    .page {
+      width: min(1320px, calc(100% - 32px));
+      margin: 0 auto;
+      padding: 30px 0 48px;
+    }
+
+    .hero {
+      background: linear-gradient(135deg, #020617, #172554);
+      color: white;
+      border-radius: 34px;
+      padding: 34px;
+      box-shadow: var(--shadow);
+      margin-bottom: 24px;
+      overflow: hidden;
+      position: relative;
+    }
+
+    .hero::after {
+      content: "";
+      position: absolute;
+      width: 360px;
+      height: 360px;
+      border-radius: 999px;
+      background: rgba(37, 99, 235, 0.35);
+      filter: blur(24px);
+      right: -120px;
+      top: -140px;
+    }
+
+    .hero-content {
+      position: relative;
+      z-index: 1;
+      display: grid;
+      grid-template-columns: 1.5fr 0.75fr;
+      gap: 24px;
+      align-items: center;
+    }
+
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      background: rgba(255, 255, 255, 0.12);
+      color: #dbeafe;
+      padding: 8px 12px;
+      border-radius: 999px;
+      font-size: 14px;
+      margin-bottom: 16px;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: clamp(32px, 5vw, 56px);
+      line-height: 1.02;
+      letter-spacing: -0.04em;
+    }
+
+    .hero p {
+      margin: 18px 0 0;
+      color: #cbd5e1;
+      line-height: 1.7;
+      max-width: 850px;
+    }
+
+    .format-card {
+      background: rgba(255, 255, 255, 0.11);
+      border: 1px solid rgba(255, 255, 255, 0.16);
+      border-radius: 24px;
+      padding: 22px;
+      backdrop-filter: blur(12px);
+      position: relative;
+      z-index: 1;
+    }
+
+    .format-card small {
+      color: #cbd5e1;
+      display: block;
+      margin-bottom: 6px;
+    }
+
+    .format-card strong {
+      font-size: 24px;
+      line-height: 1.25;
+      display: block;
+    }
+
+    .layout {
+      display: grid;
+      grid-template-columns: 1.1fr 0.9fr;
+      gap: 24px;
+      align-items: start;
+    }
+
+    .stack { display: grid; gap: 20px; }
+
+    .card {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      box-shadow: 0 10px 30px rgba(15, 23, 42, 0.04);
+      padding: 24px;
+    }
+
+    .section-title {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      margin-bottom: 18px;
+    }
+
+    .icon {
+      width: 44px;
+      height: 44px;
+      border-radius: 16px;
+      background: var(--soft);
+      display: grid;
+      place-items: center;
+      font-size: 22px;
+      flex-shrink: 0;
+    }
+
+    h2 {
+      margin: 0;
+      font-size: 22px;
+      letter-spacing: -0.02em;
+    }
+
+    .subtitle {
+      margin: 4px 0 0;
+      color: var(--muted);
+      font-size: 14px;
+    }
+
+    .upload-box {
+      border: 2px dashed #cbd5e1;
+      border-radius: 26px;
+      background: #f8fafc;
+      min-height: 160px;
+      display: grid;
+      place-items: center;
+      text-align: center;
+      padding: 24px;
+      cursor: pointer;
+      transition: 0.2s ease;
+    }
+
+    .upload-box:hover {
+      background: #f1f5f9;
+      border-color: #64748b;
+    }
+
+    .upload-box input { display: none; }
+
+    .upload-big {
+      font-size: 40px;
+      display: block;
+      margin-bottom: 10px;
+    }
+
+    .upload-title {
+      display: block;
+      font-size: 18px;
+      font-weight: 850;
+    }
+
+    .upload-help {
+      display: block;
+      color: var(--muted);
+      margin-top: 5px;
+      font-size: 14px;
+    }
+
+    .notice {
+      margin-top: 14px;
+      padding: 14px;
+      border-radius: 18px;
+      line-height: 1.55;
+      font-size: 14px;
+    }
+
+    .notice.bad {
+      color: var(--bad);
+      background: var(--bad-bg);
+    }
+
+    .notice.warn {
+      color: var(--warn);
+      background: var(--warn-bg);
+    }
+
+    .notice.good {
+      color: var(--good);
+      background: var(--good-bg);
+    }
+
+    label.field-label {
+      display: block;
+      color: #374151;
+      font-weight: 750;
+      font-size: 14px;
+      margin-bottom: 8px;
+    }
+
+    select,
+    input[type="number"] {
+      width: 100%;
+      border: 1px solid #cbd5e1;
+      background: white;
+      color: var(--ink);
+      border-radius: 16px;
+      padding: 12px 13px;
+      outline: none;
+      font-size: 15px;
+      transition: 0.2s ease;
+    }
+
+    select:focus,
+    input[type="number"]:focus {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 4px rgba(37, 99, 235, 0.1);
+    }
+
+    input[type="range"] {
+      width: 100%;
+      accent-color: var(--accent);
+    }
+
+    .objects-list {
+      display: grid;
+      gap: 14px;
+      margin-top: 16px;
+    }
+
+    .object-card {
+      border: 1px solid var(--line);
+      border-radius: 22px;
+      padding: 16px;
+      background: white;
+    }
+
+    .object-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 12px;
+      margin-bottom: 14px;
+    }
+
+    .object-title {
+      font-weight: 900;
+      word-break: break-word;
+    }
+
+    .object-meta {
+      color: var(--muted);
+      font-size: 13px;
+      margin-top: 4px;
+      line-height: 1.45;
+    }
+
+    .remove-btn,
+    .small-btn {
+      border: 1px solid #cbd5e1;
+      background: white;
+      color: #334155;
+      border-radius: 12px;
+      padding: 8px 10px;
+      cursor: pointer;
+      font-weight: 750;
+      font-size: 12px;
+      transition: 0.2s ease;
+      white-space: nowrap;
+    }
+
+    .remove-btn:hover {
+      background: #fef2f2;
+      color: #b91c1c;
+      border-color: #fecaca;
+    }
+
+    .small-btn:hover { background: #f8fafc; }
+
+    .object-grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 12px;
+    }
+
+    .object-grid .full { grid-column: 1 / -1; }
+
+
+    .mode-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+    }
+
+    .mode-option {
+      border: 1px solid var(--line);
+      background: #f8fafc;
+      border-radius: 14px;
+      padding: 10px;
+      text-align: center;
+      cursor: pointer;
+      font-weight: 800;
+      font-size: 13px;
+      transition: 0.2s ease;
+    }
+
+    .mode-option.active {
+      background: var(--dark);
+      color: white;
+      border-color: var(--dark);
+    }
+
+    .range-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 8px;
+      font-size: 14px;
+      font-weight: 750;
+    }
+
+    .viewer-card {
+      position: sticky;
+      top: 18px;
+    }
+
+    .model-viewer {
+      border: 1px solid var(--line);
+      background: #020617;
+      border-radius: 24px;
+      overflow: hidden;
+      box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.04);
+    }
+
+    .viewer-header {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 10px 12px;
+      background: rgba(15, 23, 42, 0.96);
+      color: white;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    }
+
+    .viewer-title {
+      font-weight: 850;
+      font-size: 14px;
+    }
+
+    .viewer-help {
+      color: #94a3b8;
+      font-size: 12px;
+      margin-top: 2px;
+      line-height: 1.4;
+    }
+
+    .viewer-actions {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+    }
+
+    .viewer-actions select {
+      width: auto;
+      min-width: 132px;
+      padding: 8px 10px;
+      border-radius: 12px;
+      font-size: 12px;
+      background: rgba(255, 255, 255, 0.08);
+      color: white;
+      border-color: rgba(255, 255, 255, 0.16);
+    }
+
+    .viewer-actions option {
+      color: var(--ink);
+      background: white;
+    }
+
+    #viewerCanvas {
+      width: 100%;
+      height: 300px;
+      min-height: 300px;
+      max-height: 300px;
+      display: block;
+      overflow: hidden;
+      position: relative;
+    }
+
+    #viewerCanvas canvas {
+      width: 100% !important;
+      height: 100% !important;
+      display: block;
+    }
+
+    .quote-box {
+      margin-top: 18px;
+      background: linear-gradient(135deg, #020617, #172554);
+      color: white;
+      padding: 22px;
+      border-radius: 24px;
+    }
+
+    .price-label {
+      color: #bfdbfe;
+      font-size: 14px;
+    }
+
+    .price {
+      font-size: 42px;
+      font-weight: 950;
+      letter-spacing: -0.04em;
+      margin-top: 4px;
+    }
+
+    .price-sub {
+      color: #cbd5e1;
+      margin-top: 6px;
+      font-size: 14px;
+      line-height: 1.5;
+    }
+
+    .summary-grid {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 12px;
+      margin-top: 16px;
+    }
+
+    .stat {
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      padding: 14px;
+      background: white;
+    }
+
+    .stat small {
+      display: block;
+      color: var(--muted);
+      margin-bottom: 5px;
+    }
+
+    .stat strong {
+      display: block;
+      font-size: 20px;
+    }
+
+    .stat span {
+      color: var(--muted);
+      font-size: 12px;
+      margin-top: 4px;
+      display: block;
+      line-height: 1.4;
+    }
+
+    .empty-state {
+      border: 1px dashed #cbd5e1;
+      background: #f8fafc;
+      border-radius: 24px;
+      text-align: center;
+      padding: 28px 20px;
+      color: var(--muted);
+      margin-top: 16px;
+    }
+
+    .empty-state strong {
+      color: var(--ink);
+      display: block;
+      margin-bottom: 6px;
+      font-size: 18px;
+    }
+
+    .primary-btn {
+      border: none;
+      width: 100%;
+      margin-top: 16px;
+      background: var(--accent);
+      color: white;
+      border-radius: 18px;
+      padding: 16px;
+      font-size: 16px;
+      font-weight: 850;
+      cursor: pointer;
+      transition: 0.2s ease;
+    }
+
+    .primary-btn:hover {
+      background: var(--accent-dark);
+      transform: translateY(-1px);
+    }
+
+    .primary-btn:disabled {
+      opacity: 0.45;
+      cursor: not-allowed;
+      transform: none;
+    }
+
+    .status-list {
+      display: grid;
+      gap: 8px;
+      margin-top: 14px;
+    }
+
+    .status-row {
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      padding: 10px 12px;
+      font-size: 13px;
+      line-height: 1.45;
+      background: #f8fafc;
+    }
+
+    .status-row.bad {
+      background: var(--bad-bg);
+      color: var(--bad);
+      border-color: #fecaca;
+    }
+
+    .status-row.good {
+      background: var(--good-bg);
+      color: var(--good);
+      border-color: #a7f3d0;
+    }
+
+    .hidden { display: none !important; }
+
+    .client-hidden { display: none !important; }
+
+    .brand-mark {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      font-weight: 900;
+      letter-spacing: -0.02em;
+    }
+
+    .brand-dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 999px;
+      background: #60a5fa;
+      box-shadow: 0 0 0 6px rgba(96, 165, 250, 0.18);
+    }
+
+    @media (max-width: 1060px) {
+      .hero-content,
+      .layout {
+        grid-template-columns: 1fr;
+      }
+
+      .viewer-card {
+        position: static;
+      }
+    }
+
+    @media (max-width: 760px) {
+      .page {
+        width: min(100% - 20px, 1320px);
+        padding-top: 14px;
+      }
+
+      .hero,
+      .card {
+        border-radius: 22px;
+        padding: 20px;
+      }
+
+      .object-grid,
+      .summary-grid {
+        grid-template-columns: 1fr;
+      }
+
+  
+    .mode-row {
+        grid-template-columns: 1fr;
+      }
+
+      .viewer-header {
+        flex-direction: column;
+      }
+
+      .viewer-actions {
+        width: 100%;
+      }
+
+      .viewer-actions select {
+        width: 100%;
+      }
+
+      #viewerCanvas {
+        height: 240px;
+        min-height: 240px;
+        max-height: 240px;
+      }
+
+      .price { font-size: 34px; }
+    }
+  </style>
+</head>
+<body>
+  <main class="page">
+    <section class="hero">
+      <div class="hero-content">
+        <div>
+          <div class="pill"><span class="brand-mark"><span class="brand-dot"></span> PrototiposRD</span></div>
+          <h1>Cotiza tus prototipos 3D en minutos</h1>
+          <p>
+            Sube tus modelos, elige material, color y cantidad. PrototiposRD prepara la orientación, organiza los lotes de producción y genera una cotización estimada al instante.
+          </p>
+        </div>
+        <div class="format-card">
+          <small>Área de impresión disponible</small>
+          <strong>256 × 256 × 256 mm</strong>
+          <small style="margin-top:12px;">Proceso</small>
+          <strong>Cotización automática</strong>
+        </div>
+      </div>
+    </section>
+
+    <section class="layout">
+      <div class="stack">
+        <article class="card">
+          <div class="section-title">
+            <div class="icon">📤</div>
+            <div>
+              <h2>Sube tus modelos</h2>
+              <p class="subtitle">Agrega uno o varios archivos para preparar tu cotización.</p>
+            </div>
+          </div>
+
+          <label class="upload-box" for="fileInput">
+            <span>
+              <span class="upload-big">📦</span>
+              <span class="upload-title">Arrastra o selecciona tus archivos</span>
+              <span class="upload-help">Formatos recomendados: STL, OBJ y 3MF.</span>
+            </span>
+            <input id="fileInput" type="file" multiple accept=".stl,.3mf,.obj,.step,.stp" />
+          </label>
+
+          <div id="uploadNotice" class="notice warn hidden"></div>
+          <div id="objectsList" class="objects-list"></div>
+        </article>
+      </div>
+
+      <aside class="stack viewer-card">
+        <article class="card">
+          <div class="section-title">
+            <div class="icon">🖨️</div>
+            <div>
+              <h2>Vista previa de producción</h2>
+              <p class="subtitle">Visualiza cómo se organizarán las piezas antes de confirmar.</p>
+            </div>
+          </div>
+
+          <div class="model-viewer">
+            <div class="viewer-header">
+              <div>
+                <div class="viewer-title">Acomodo de piezas</div>
+                <div id="previewQuantityNote" class="viewer-help">Sube modelos para ver la distribución.</div>
+                <div class="viewer-help">Arrastra para explorar · rueda para acercar</div>
+              </div>
+              <div class="viewer-actions">
+                <select id="plateSelector">
+                  <option value="0">Cama 1</option>
+                </select>
+                <button id="resetViewBtn" class="small-btn" type="button">Centrar</button>
+              </div>
+            </div>
+            <div id="viewerCanvas"></div>
+          </div>
+
+          <div id="packingStatus" class="status-list"></div>
+
+          <div id="emptyQuote" class="empty-state">
+            <strong>Comienza subiendo tus archivos</strong>
+            La vista previa y el precio estimado aparecerán aquí.
+          </div>
+
+          <div id="quoteContent" class="hidden">
+            <div class="quote-box">
+              <div class="price-label">Total estimado</div>
+              <div id="totalPrice" class="price">RD$0.00</div>
+              <div id="priceSub" class="price-sub">Precio sujeto a revisión final</div>
+            </div>
+
+            <div class="summary-grid">
+              <div class="stat">
+                <small>Piezas totales</small>
+                <strong id="totalPieces">0</strong>
+                <span>Cantidad total solicitada</span>
+              </div>
+              <div class="stat">
+                <small>Lotes</small>
+                <strong id="totalPlates">0</strong>
+                <span>Separados por material y capacidad</span>
+              </div>
+              <div class="stat client-hidden">
+                <small>Material total</small>
+                <strong id="totalMaterial">0 g</strong>
+                <span>Incluye soportes estimados</span>
+              </div>
+              <div class="stat">
+                <small>Tiempo de producción</small>
+                <strong id="totalHours">0 h</strong>
+                <span id="slicerStatusText">Calculado automáticamente</span>
+              </div>
+            </div>
+
+            <div class="notice good">
+              Cotización lista. Puedes revisar la vista previa antes de continuar.
+            </div>
+
+            <div id="slicerErrorBox" class="notice bad hidden"></div>
+
+            <button id="requestBtn" class="primary-btn" type="button">Solicitar cotización</button>
+          </div>
+        </article>
+      </aside>
+    </section>
+  </main>
+
+  <script>
+    const BED = { x: 256, y: 256, z: 256 };
+
+    /*
+      Variables internas de producción.
+      No se muestran al cliente en la interfaz.
+    */
+    const DEFAULT_FILAMENT_PRICE_PER_GRAM = 2.0;
+    const TPU_FILAMENT_PRICE_PER_GRAM = 3.0;
+    const MACHINE_PRICE_PER_HOUR = 30.0;
+    const PROFIT_MULTIPLIER = 1.6;
+    const ELECTRICITY_RATE_PER_KWH = 8.59;
+    const PRINTER_AVERAGE_POWER_KW = 0.35;
+    const SETUP_COST_PER_PLATE = 100.0;
+    const PACKING_GAP_MM = 8;
+    const SLICER_ENDPOINT = "/api/slice-batch";
+
+    const MATERIALS = {
+      PLA: {
+        name: "PLA",
+        description: "Económico, fácil de imprimir y bueno para prototipos o piezas estéticas.",
+        pricePerGram: DEFAULT_FILAMENT_PRICE_PER_GRAM,
+        densityFactor: 1.0,
+        colors: ["Blanco", "Negro", "Gris", "Rojo", "Azul", "Verde"]
+      },
+      PETG: {
+        name: "PETG",
+        description: "Más resistente que PLA, buena opción para piezas funcionales generales.",
+        pricePerGram: DEFAULT_FILAMENT_PRICE_PER_GRAM,
+        densityFactor: 1.08,
+        colors: ["Transparente", "Negro", "Blanco", "Azul", "Rojo"]
+      },
+      ABS: {
+        name: "ABS",
+        description: "Resistente a temperatura moderada, útil para piezas técnicas.",
+        pricePerGram: DEFAULT_FILAMENT_PRICE_PER_GRAM,
+        densityFactor: 0.95,
+        colors: ["Negro", "Blanco", "Gris", "Rojo"]
+      },
+      TPU: {
+        name: "TPU",
+        description: "Flexible, recomendado para piezas elásticas o protectores.",
+        pricePerGram: TPU_FILAMENT_PRICE_PER_GRAM,
+        densityFactor: 1.15,
+        colors: ["Negro", "Transparente", "Rojo", "Azul"]
+      },
+      NYLON: {
+        name: "Nylon",
+        description: "Alta resistencia mecánica, ideal para piezas exigentes.",
+        pricePerGram: DEFAULT_FILAMENT_PRICE_PER_GRAM,
+        densityFactor: 1.12,
+        colors: ["Natural", "Negro"]
+      }
+    };
+
+    const BASIC_USES = {
+      functional: {
+        label: "Pieza funcional",
+        description: "Balance entre resistencia, tiempo y costo.",
+        infill: 40,
+        layerHeight: 0.2,
+        walls: 4,
+        supports: "auto",
+        qualityMultiplier: 1.1
+      },
+      aesthetic: {
+        label: "Pieza estética",
+        description: "Mejor acabado visual, capas más finas y menor relleno.",
+        infill: 15,
+        layerHeight: 0.12,
+        walls: 3,
+        supports: "auto",
+        qualityMultiplier: 1.35
+      },
+      architecture: {
+        label: "Arquitectura / maqueta",
+        description: "Modelos visuales con buen detalle y bajo peso.",
+        infill: 10,
+        layerHeight: 0.16,
+        walls: 2,
+        supports: "auto",
+        qualityMultiplier: 1.2
+      },
+      prototype: {
+        label: "Prototipo rápido",
+        description: "Más rápido y económico, con acabado estándar.",
+        infill: 12,
+        layerHeight: 0.28,
+        walls: 2,
+        supports: "auto",
+        qualityMultiplier: 0.82
+      },
+      mechanical: {
+        label: "Pieza mecánica resistente",
+        description: "Mayor relleno, más paredes y más tiempo de impresión.",
+        infill: 65,
+        layerHeight: 0.18,
+        walls: 5,
+        supports: "auto",
+        qualityMultiplier: 1.35
+      }
+    };
+
+    const COLOR_HEX = {
+      Blanco: 0xe5e7eb,
+      Negro: 0x111827,
+      Gris: 0x94a3b8,
+      Rojo: 0xef4444,
+      Azul: 0x3b82f6,
+      Verde: 0x22c55e,
+      Transparente: 0x93c5fd,
+      Natural: 0xf8e7c8
+    };
+
+    const ACCEPTED_EXTENSIONS = ["stl", "3mf", "obj", "step", "stp"];
+
+    const state = {
+      objects: [],
+      plates: [],
+      selectedPlateIndex: 0,
+      slicer: {
+        status: "idle",
+        timer: null,
+        jobEstimate: null,
+        errorMessage: ""
+      }
+    };
+
+    const $ = (id) => document.getElementById(id);
+
+    function formatCurrency(value) {
+      return new Intl.NumberFormat("es-DO", {
+        style: "currency",
+        currency: "DOP",
+        minimumFractionDigits: 2
+      }).format(value);
+    }
+
+    function formatDurationFromHours(hours) {
+      if (!Number.isFinite(hours) || hours <= 0) {
+        return "0 min";
+      }
+
+      const totalMinutes = Math.max(1, Math.round(hours * 60));
+      const h = Math.floor(totalMinutes / 60);
+      const m = totalMinutes % 60;
+
+      if (h <= 0) {
+        return `${totalMinutes} min`;
+      }
+
+      if (m === 0) {
+        return `${h} h`;
+      }
+
+      return `${h} h ${m} min`;
+    }
+
+    function getFileExtension(filename = "") {
+      const parts = filename.split(".");
+      return parts.length > 1 ? parts.pop().toLowerCase() : "";
+    }
+
+    function uid() {
+      return crypto.randomUUID ? crypto.randomUUID() : `id-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    }
+
+    function getParams(obj) {
+      if (obj.mode === "basic") return BASIC_USES[obj.useCase];
+
+      return {
+        label: "Configuración avanzada",
+        description: "Parámetros manuales",
+        infill: obj.advanced.infill,
+        layerHeight: obj.advanced.layerHeight,
+        walls: obj.advanced.walls,
+        supports: obj.advanced.supports,
+        qualityMultiplier: 0.2 / obj.advanced.layerHeight
+      };
+    }
+
+    function estimateByObject(obj) {
+      if (!obj.geometry || !obj.valid) {
+        return null;
+      }
+
+      const params = getParams(obj);
+      const material = MATERIALS[obj.materialKey];
+      const baseVolumeCm3 = Math.max(obj.geometry.solidVolumeCm3 || obj.geometry.fallbackVolumeCm3 || 0, 0);
+
+      if (!baseVolumeCm3) return null;
+
+      const shellFactor = 0.22 + params.walls * 0.035;
+      const infillFactor = params.infill / 100;
+
+      let supportVolumeCm3 = 0;
+      if (params.supports === "yes") {
+        supportVolumeCm3 = Math.max(obj.geometry.supportVolumeCm3, baseVolumeCm3 * 0.18);
+      } else if (params.supports === "auto") {
+        supportVolumeCm3 = obj.geometry.supportVolumeCm3;
+      }
+
+      const printedVolumeCm3 = baseVolumeCm3 * (shellFactor + infillFactor * 0.62) + supportVolumeCm3;
+      let filamentGrams = printedVolumeCm3 * 1.24 * material.densityFactor;
+
+      const supportRatio = supportVolumeCm3 / Math.max(baseVolumeCm3, 1);
+      const heightFactor = obj.geometry.printHeightMm
+        ? 1 + Math.min(0.28, obj.geometry.printHeightMm / 900)
+        : 1;
+
+      let printHours = Math.max(
+        0.25,
+        (printedVolumeCm3 / 12) *
+          params.qualityMultiplier *
+          (1 + params.walls * 0.045) *
+          (1 + Math.min(0.35, supportRatio * 0.65)) *
+          heightFactor
+      );
+
+      if (obj.slicerEstimate) {
+        if (Number.isFinite(obj.slicerEstimate.filamentGrams)) {
+          filamentGrams = obj.slicerEstimate.filamentGrams;
+        }
+        if (Number.isFinite(obj.slicerEstimate.printHours)) {
+          printHours = obj.slicerEstimate.printHours;
+        }
+      }
+
+      const electricityCostPerPiece =
+        printHours * PRINTER_AVERAGE_POWER_KW * ELECTRICITY_RATE_PER_KWH;
+
+      const costPerPiece =
+        filamentGrams * material.pricePerGram +
+        printHours * MACHINE_PRICE_PER_HOUR +
+        electricityCostPerPiece;
+
+      const pricePerPiece = costPerPiece * PROFIT_MULTIPLIER;
+
+      return {
+        params,
+        baseVolumeCm3,
+        supportVolumeCm3,
+        printedVolumeCm3,
+        filamentGrams,
+        printHours,
+        costPerPiece,
+        pricePerPiece
+      };
+    }
+
+    function calculateTotals() {
+      let totalPieces = 0;
+
+      for (const obj of state.objects) {
+        totalPieces += obj.quantity;
+      }
+
+      if (
+        state.slicer.jobEstimate &&
+        state.slicer.status === "verified" &&
+        Number.isFinite(Number(state.slicer.jobEstimate.totalPrintHours)) &&
+        Number.isFinite(Number(state.slicer.jobEstimate.totalFilamentGrams)) &&
+        Number(state.slicer.jobEstimate.totalFilamentGrams) > 0.01
+      ) {
+        const totalPrice = Math.max(150, Number(state.slicer.jobEstimate.totalPrice || 0));
+
+        return {
+          totalPieces,
+          totalMaterial: Number(state.slicer.jobEstimate.totalFilamentGrams),
+          totalHours: Number(state.slicer.jobEstimate.totalPrintHours),
+          totalPrice,
+          totalPlates: Number(state.slicer.jobEstimate.totalPlates || state.plates.length || 0),
+          invalidCount: 0,
+          source: "slicer"
+        };
+      }
+
+      let totalMaterial = 0;
+      let totalHours = 0;
+      let totalPrice = 0;
+      let invalidCount = 0;
+
+      for (const obj of state.objects) {
+        const estimate = estimateByObject(obj);
+        if (!estimate) {
+          if (obj.file) invalidCount++;
+          continue;
+        }
+
+        totalMaterial += estimate.filamentGrams * obj.quantity;
+        totalHours += estimate.printHours * obj.quantity;
+        totalPrice += estimate.pricePerPiece * obj.quantity;
+      }
+
+      if (totalPieces > 0 && totalPrice > 0) {
+        totalPrice += Math.max(1, state.plates.length || 1) * SETUP_COST_PER_PLATE;
+        totalPrice = Math.max(150, totalPrice);
+      }
+
+      return {
+        totalPieces,
+        totalMaterial,
+        totalHours,
+        totalPrice,
+        totalPlates: state.plates.length,
+        invalidCount,
+        source: "local"
+      };
+    }
+
+    function showUploadNotice(message, type = "warn") {
+      const box = $("uploadNotice");
+      box.textContent = message;
+      box.className = `notice ${type}`;
+      box.classList.remove("hidden");
+    }
+
+    function hideUploadNotice() {
+      $("uploadNotice").classList.add("hidden");
+    }
+
+    function createObjectRecord(file) {
+      const ext = getFileExtension(file.name);
+      const materialKey = "PLA";
+
+      return {
+        id: uid(),
+        file,
+        ext,
+        name: file.name,
+        sizeBytes: file.size,
+        quantity: 1,
+        materialKey,
+        color: MATERIALS[materialKey].colors[0],
+        mode: "basic",
+        useCase: "functional",
+        advanced: {
+          infill: 30,
+          layerHeight: 0.2,
+          walls: 3,
+          supports: "auto"
+        },
+        loading: true,
+        valid: false,
+        error: "",
+        warning: "",
+        geometry: null,
+        template: null,
+        slicerEstimate: null
+      };
+    }
+
+    function materialOptions(selected) {
+      return Object.entries(MATERIALS)
+        .map(([key, mat]) => `<option value="${key}" ${key === selected ? "selected" : ""}>${mat.name}</option>`)
+        .join("");
+    }
+
+    function colorOptions(obj) {
+      return MATERIALS[obj.materialKey].colors
+        .map((color) => `<option value="${color}" ${color === obj.color ? "selected" : ""}>${color}</option>`)
+        .join("");
+    }
+
+    function useOptions(selected) {
+      return Object.entries(BASIC_USES)
+        .map(([key, use]) => `<option value="${key}" ${key === selected ? "selected" : ""}>${use.label}</option>`)
+        .join("");
+    }
+
+    function renderObjectsList() {
+      const list = $("objectsList");
+
+      if (!state.objects.length) {
+        list.innerHTML = "";
+        return;
+      }
+
+      list.innerHTML = state.objects.map((obj, index) => {
+        const params = getParams(obj);
+        const geo = obj.geometry;
+        const sizeText = geo
+          ? "Modelo preparado"
+          : obj.loading
+            ? "Analizando archivo..."
+            : "Pendiente de validación";
+
+        const status = obj.error
+          ? `<div class="notice bad">${obj.error}</div>`
+          : obj.warning
+            ? `<div class="notice warn">${obj.warning}</div>`
+            : obj.valid
+              ? `<div class="notice good">Modelo listo para cotizar.</div>`
+              : `<div class="notice warn">${sizeText}</div>`;
+
+        return `
+          <div class="object-card" data-object-id="${obj.id}">
+            <div class="object-head">
+              <div>
+                <div class="object-title">${index + 1}. ${obj.name}</div>
+                <div class="object-meta">
+                  ${(obj.sizeBytes / (1024 * 1024)).toFixed(2)} MB · ${obj.ext.toUpperCase()}
+                </div>
+              </div>
+              <button class="remove-btn" data-action="remove" data-id="${obj.id}" type="button">Quitar</button>
+            </div>
+
+            <div class="object-grid">
+              <div>
+                <label class="field-label">Cantidad</label>
+                <input type="number" min="1" max="100" value="${obj.quantity}" data-action="quantity" data-id="${obj.id}" />
+              </div>
+
+              <div>
+                <label class="field-label">Material</label>
+                <select data-action="material" data-id="${obj.id}">
+                  ${materialOptions(obj.materialKey)}
+                </select>
+              </div>
+
+              <div>
+                <label class="field-label">Color</label>
+                <select data-action="color" data-id="${obj.id}">
+                  ${colorOptions(obj)}
+                </select>
+              </div>
+
+              <div>
+                <label class="field-label">Modo</label>
+                <div class="mode-row">
+                  <button class="mode-option ${obj.mode === "basic" ? "active" : ""}" data-action="mode" data-mode="basic" data-id="${obj.id}" type="button">Básico</button>
+                  <button class="mode-option ${obj.mode === "advanced" ? "active" : ""}" data-action="mode" data-mode="advanced" data-id="${obj.id}" type="button">Avanzado</button>
+                </div>
+              </div>
+
+
+              ${obj.mode === "basic" ? `
+                <div class="full">
+                  <label class="field-label">Tipo de pieza</label>
+                  <select data-action="useCase" data-id="${obj.id}">
+                    ${useOptions(obj.useCase)}
+                  </select>
+                  <p class="object-meta">${BASIC_USES[obj.useCase].description}</p>
+                </div>
+              ` : `
+                <div>
+                  <div class="range-row">
+                    <span>Infill</span>
+                    <span>${obj.advanced.infill}%</span>
+                  </div>
+                  <input type="range" min="5" max="100" step="5" value="${obj.advanced.infill}" data-action="infill" data-id="${obj.id}" />
+                </div>
+
+                <div>
+                  <label class="field-label">Calidad</label>
+                  <select data-action="layerHeight" data-id="${obj.id}">
+                    <option value="0.12" ${obj.advanced.layerHeight === 0.12 ? "selected" : ""}>0.12 mm</option>
+                    <option value="0.16" ${obj.advanced.layerHeight === 0.16 ? "selected" : ""}>0.16 mm</option>
+                    <option value="0.2" ${obj.advanced.layerHeight === 0.2 ? "selected" : ""}>0.20 mm</option>
+                    <option value="0.28" ${obj.advanced.layerHeight === 0.28 ? "selected" : ""}>0.28 mm</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label class="field-label">Resistencia</label>
+                  <select data-action="walls" data-id="${obj.id}">
+                    <option value="2" ${obj.advanced.walls === 2 ? "selected" : ""}>2</option>
+                    <option value="3" ${obj.advanced.walls === 3 ? "selected" : ""}>3</option>
+                    <option value="4" ${obj.advanced.walls === 4 ? "selected" : ""}>4</option>
+                    <option value="5" ${obj.advanced.walls === 5 ? "selected" : ""}>5</option>
+                    <option value="6" ${obj.advanced.walls === 6 ? "selected" : ""}>6</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label class="field-label">Soportes</label>
+                  <select data-action="supports" data-id="${obj.id}">
+                    <option value="auto" ${obj.advanced.supports === "auto" ? "selected" : ""}>Automático</option>
+                    <option value="yes" ${obj.advanced.supports === "yes" ? "selected" : ""}>Forzar</option>
+                    <option value="no" ${obj.advanced.supports === "no" ? "selected" : ""}>Sin soportes</option>
+                  </select>
+                </div>
+              `}
+            </div>
+
+            ${status}
+          </div>
+        `;
+      }).join("");
+    }
+
+    function bindObjectListEvents() {
+      $("objectsList").addEventListener("input", (event) => {
+        const target = event.target;
+        const id = target.dataset.id;
+        const action = target.dataset.action;
+        if (!id || !action) return;
+
+        const obj = state.objects.find((item) => item.id === id);
+        if (!obj) return;
+
+        if (action === "quantity") {
+          const q = Number(target.value);
+          obj.quantity = Number.isFinite(q) && q > 0 ? Math.min(100, Math.round(q)) : 1;
+        }
+
+        if (action === "infill") {
+          obj.advanced.infill = Number(target.value);
+        }
+
+        clearSlicerEstimates();
+        recalcAndRender(false);
+        scheduleSlicerBatch();
+      });
+
+      $("objectsList").addEventListener("change", (event) => {
+        const target = event.target;
+        const id = target.dataset.id;
+        const action = target.dataset.action;
+        if (!id || !action) return;
+
+        const obj = state.objects.find((item) => item.id === id);
+        if (!obj) return;
+
+        if (action === "material") {
+          obj.materialKey = target.value;
+          obj.color = MATERIALS[obj.materialKey].colors[0];
+        }
+
+        if (action === "color") obj.color = target.value;
+        if (action === "useCase") obj.useCase = target.value;
+        if (action === "layerHeight") obj.advanced.layerHeight = Number(target.value);
+        if (action === "walls") obj.advanced.walls = Number(target.value);
+        if (action === "supports") obj.advanced.supports = target.value;
+
+        clearSlicerEstimates();
+        recalcAndRender(true);
+        scheduleSlicerBatch();
+      });
+
+      $("objectsList").addEventListener("click", (event) => {
+        const target = event.target;
+        const id = target.dataset.id;
+        const action = target.dataset.action;
+        if (!id || !action) return;
+
+        const obj = state.objects.find((item) => item.id === id);
+        if (!obj && action !== "remove") return;
+
+        if (action === "remove") {
+          removeObject(id);
+          return;
+        }
+
+
+        if (action === "mode") {
+          obj.mode = target.dataset.mode;
+          clearSlicerEstimates();
+          recalcAndRender(true);
+          scheduleSlicerBatch();
+        }
+      });
+    }
+
+    function removeObject(id) {
+      const index = state.objects.findIndex((obj) => obj.id === id);
+      if (index >= 0) {
+        state.objects.splice(index, 1);
+      }
+      recalcAndRender(true);
+      clearSlicerEstimates();
+      scheduleSlicerBatch();
+    }
+
+    function buildInstancesForPacking() {
+      const instances = [];
+
+      for (const obj of state.objects) {
+        if (!obj.valid || !obj.template || !obj.geometry) continue;
+
+        const size = obj.geometry.boundingBoxMm;
+        const tooLarge = size.x > BED.x || size.z > BED.z || size.y > BED.y;
+
+        if (tooLarge) {
+          obj.error = `La pieza excede el volumen máximo de impresión 256×256×256 mm después de orientarla.`;
+          obj.valid = false;
+          continue;
+        }
+
+        for (let i = 0; i < obj.quantity; i++) {
+          instances.push({
+            objectId: obj.id,
+            instanceIndex: i,
+            width: size.x,
+            depth: size.z,
+            height: size.y,
+            area: size.x * size.z
+          });
+        }
+      }
+
+      instances.sort((a, b) => Math.max(b.width, b.depth) - Math.max(a.width, a.depth) || b.area - a.area);
+      return instances;
+    }
+
+    function createEmptyPlate() {
+      return {
+        placements: [],
+        freeRects: [
+          {
+            x: 0,
+            z: 0,
+            width: BED.x,
+            depth: BED.z
+          }
+        ]
+      };
+    }
+
+    function rectContains(a, b) {
+      return (
+        b.x >= a.x &&
+        b.z >= a.z &&
+        b.x + b.width <= a.x + a.width &&
+        b.z + b.depth <= a.z + a.depth
+      );
+    }
+
+    function rectsIntersect(a, b) {
+      return !(
+        a.x + a.width <= b.x ||
+        b.x + b.width <= a.x ||
+        a.z + a.depth <= b.z ||
+        b.z + b.depth <= a.z
+      );
+    }
+
+    function pruneFreeRects(freeRects) {
+      const result = [];
+
+      for (let i = 0; i < freeRects.length; i++) {
+        const rect = freeRects[i];
+        if (rect.width <= 0.01 || rect.depth <= 0.01) continue;
+
+        let contained = false;
+
+        for (let j = 0; j < freeRects.length; j++) {
+          if (i === j) continue;
+          if (rectContains(freeRects[j], rect)) {
+            contained = true;
+            break;
+          }
+        }
+
+        if (!contained) result.push(rect);
+      }
+
+      return result;
+    }
+
+    function splitFreeRect(freeRect, usedRect) {
+      const newRects = [];
+
+      if (!rectsIntersect(freeRect, usedRect)) {
+        return [freeRect];
+      }
+
+      const freeRight = freeRect.x + freeRect.width;
+      const freeBottom = freeRect.z + freeRect.depth;
+      const usedRight = usedRect.x + usedRect.width;
+      const usedBottom = usedRect.z + usedRect.depth;
+
+      if (usedRect.x > freeRect.x) {
+        newRects.push({
+          x: freeRect.x,
+          z: freeRect.z,
+          width: usedRect.x - freeRect.x,
+          depth: freeRect.depth
+        });
+      }
+
+      if (usedRight < freeRight) {
+        newRects.push({
+          x: usedRight,
+          z: freeRect.z,
+          width: freeRight - usedRight,
+          depth: freeRect.depth
+        });
+      }
+
+      if (usedRect.z > freeRect.z) {
+        newRects.push({
+          x: freeRect.x,
+          z: freeRect.z,
+          width: freeRect.width,
+          depth: usedRect.z - freeRect.z
+        });
+      }
+
+      if (usedBottom < freeBottom) {
+        newRects.push({
+          x: freeRect.x,
+          z: usedBottom,
+          width: freeRect.width,
+          depth: freeBottom - usedBottom
+        });
+      }
+
+      return newRects;
+    }
+
+    function canPlaceRect(plate, x, z, width, depth) {
+      const proposed = { x, z, width, depth };
+
+      if (
+        proposed.x < 0 ||
+        proposed.z < 0 ||
+        proposed.x + proposed.width > BED.x ||
+        proposed.z + proposed.depth > BED.z
+      ) {
+        return false;
+      }
+
+      for (const placement of plate.placements) {
+        const occupied = {
+          x: placement.x - placement.occupiedWidth / 2,
+          z: placement.z - placement.occupiedDepth / 2,
+          width: placement.occupiedWidth,
+          depth: placement.occupiedDepth
+        };
+
+        if (rectsIntersect(proposed, occupied)) {
+          return false;
+        }
+      }
+
+      return true;
+    }
+
+    function scorePlacement(freeRect, packedWidth, packedDepth, rotated, strategy) {
+      const leftoverX = freeRect.width - packedWidth;
+      const leftoverZ = freeRect.depth - packedDepth;
+      const shortSideFit = Math.min(leftoverX, leftoverZ);
+      const longSideFit = Math.max(leftoverX, leftoverZ);
+      const areaFit = freeRect.width * freeRect.depth - packedWidth * packedDepth;
+
+      if (strategy === "area") {
+        return areaFit * 1000000 + shortSideFit * 10000 + longSideFit + (rotated ? 250 : 0);
+      }
+
+      if (strategy === "longSide") {
+        return longSideFit * 1000000 + shortSideFit * 10000 + areaFit + (rotated ? 250 : 0);
+      }
+
+      if (strategy === "width") {
+        return (freeRect.x + packedWidth) * 1000000 + (freeRect.z + packedDepth) * 1000 + areaFit + (rotated ? 250 : 0);
+      }
+
+      if (strategy === "height") {
+        return (freeRect.z + packedDepth) * 1000000 + (freeRect.x + packedWidth) * 1000 + areaFit + (rotated ? 250 : 0);
+      }
+
+      return shortSideFit * 1000000 + longSideFit * 10000 + areaFit;
+    }
+
+    function findBestPlacement(plate, item, strategy = "shortSide") {
+      let orientations = [
+        { rotated: false, width: item.width, depth: item.depth },
+        { rotated: true, width: item.depth, depth: item.width }
+      ];
+
+      /*
+        Las estrategias wide/tall fuerzan pruebas donde la orientación cambia
+        activamente para reducir el rectángulo usado. Esto evita que todas las
+        piezas queden en la misma orientación cuando ambas opciones caben.
+      */
+      if (strategy === "longAlongX") {
+        orientations.sort((a, b) => b.width - a.width);
+      }
+
+      if (strategy === "longAlongZ") {
+        orientations.sort((a, b) => b.depth - a.depth);
+      }
+
+      let best = null;
+
+      for (const orient of orientations) {
+        const packedWidth = orient.width + PACKING_GAP_MM;
+        const packedDepth = orient.depth + PACKING_GAP_MM;
+
+        if (packedWidth > BED.x || packedDepth > BED.z) continue;
+
+        for (const freeRect of plate.freeRects) {
+          if (packedWidth > freeRect.width || packedDepth > freeRect.depth) continue;
+
+          const x = freeRect.x;
+          const z = freeRect.z;
+
+          if (!canPlaceRect(plate, x, z, packedWidth, packedDepth)) continue;
+
+          let score = scorePlacement(freeRect, packedWidth, packedDepth, orient.rotated, strategy);
+
+          /*
+            Penalización mínima solo para desempate. En preferRotated se invierte.
+          */
+          score += orient.rotated ? 25 : 0;
+
+          if (!best || score < best.score) {
+            best = {
+              ...item,
+              x: x + packedWidth / 2,
+              z: z + packedDepth / 2,
+              width: orient.width,
+              depth: orient.depth,
+              occupiedWidth: packedWidth,
+              occupiedDepth: packedDepth,
+              rotated: orient.rotated,
+              score
+            };
+          }
+        }
+      }
+
+      return best;
+    }
+
+    function insertPlacement(plate, placement) {
+      const usedRect = {
+        x: placement.x - placement.occupiedWidth / 2,
+        z: placement.z - placement.occupiedDepth / 2,
+        width: placement.occupiedWidth,
+        depth: placement.occupiedDepth
+      };
+
+      let updatedFreeRects = [];
+
+      for (const freeRect of plate.freeRects) {
+        updatedFreeRects.push(...splitFreeRect(freeRect, usedRect));
+      }
+
+      plate.freeRects = pruneFreeRects(updatedFreeRects);
+
+      const cleanPlacement = { ...placement };
+      delete cleanPlacement.score;
+      plate.placements.push(cleanPlacement);
+    }
+
+    function tryPlaceInPlate(plate, item, strategy = "shortSide") {
+      const best = findBestPlacement(plate, item, strategy);
+      if (!best) return false;
+
+      insertPlacement(plate, best);
+      return true;
+    }
+
+    function plateUsedBounds(plate) {
+      let right = 0;
+      let bottom = 0;
+
+      for (const placement of plate.placements) {
+        right = Math.max(right, placement.x + placement.occupiedWidth / 2);
+        bottom = Math.max(bottom, placement.z + placement.occupiedDepth / 2);
+      }
+
+      return {
+        right,
+        bottom,
+        area: right * bottom
+      };
+    }
+
+    function scorePacking(plates) {
+      let usedArea = 0;
+      let maxBottom = 0;
+      let maxRight = 0;
+      let rotatedCount = 0;
+
+      for (const plate of plates) {
+        const bounds = plateUsedBounds(plate);
+        usedArea += bounds.area;
+        maxBottom = Math.max(maxBottom, bounds.bottom);
+        maxRight = Math.max(maxRight, bounds.right);
+
+        for (const placement of plate.placements) {
+          if (placement.rotated) rotatedCount++;
+        }
+      }
+
+      return (
+        plates.length * 1_000_000_000 +
+        usedArea * 1000 +
+        maxBottom * 10 +
+        maxRight +
+        rotatedCount * 500
+      );
+    }
+
+    function orderInstances(instances, orderStrategy) {
+      const ordered = [...instances];
+
+      if (orderStrategy === "area") {
+        ordered.sort((a, b) => b.area - a.area);
+      } else if (orderStrategy === "longSide") {
+        ordered.sort((a, b) => Math.max(b.width, b.depth) - Math.max(a.width, a.depth) || b.area - a.area);
+      } else if (orderStrategy === "wideFirst") {
+        ordered.sort((a, b) => b.width - a.width || b.area - a.area);
+      } else if (orderStrategy === "tallFirst") {
+        ordered.sort((a, b) => b.depth - a.depth || b.area - a.area);
+      } else if (orderStrategy === "mixed") {
+        ordered.sort((a, b) => {
+          const aAspect = Math.max(a.width, a.depth) / Math.max(1, Math.min(a.width, a.depth));
+          const bAspect = Math.max(b.width, b.depth) / Math.max(1, Math.min(b.width, b.depth));
+          return bAspect - aAspect || b.area - a.area;
+        });
+      }
+
+      return ordered;
+    }
+
+    function runPackingAttempt(instances, orderStrategy, placementStrategy) {
+      const plates = [];
+      const ordered = orderInstances(instances, orderStrategy);
+
+      for (const item of ordered) {
+        let placed = false;
+
+        for (const plate of plates) {
+          if (tryPlaceInPlate(plate, item, placementStrategy)) {
+            placed = true;
+            break;
+          }
+        }
+
+        if (!placed) {
+          const plate = createEmptyPlate();
+          if (!tryPlaceInPlate(plate, item, placementStrategy)) {
+            return {
+              plates,
+              error: `Una pieza no cabe en la cama 256×256 mm. Revisa orientación o escala.`
+            };
+          }
+          plates.push(plate);
+        }
+      }
+
+      return { plates, error: "" };
+    }
+
+    function packInstances(instances) {
+      const attempts = [
+        ["longSide", "shortSide"],
+        ["area", "shortSide"],
+        ["wideFirst", "longAlongX"],
+        ["tallFirst", "longAlongZ"],
+        ["mixed", "shortSide"],
+        ["longSide", "area"],
+        ["area", "area"],
+        ["mixed", "longSide"]
+      ];
+
+      let best = null;
+
+      for (const [orderStrategy, placementStrategy] of attempts) {
+        const result = runPackingAttempt(instances, orderStrategy, placementStrategy);
+        if (result.error) continue;
+
+        const score = scorePacking(result.plates);
+        if (!best || score < best.score) {
+          best = { ...result, score };
+        }
+      }
+
+      if (!best) {
+        return runPackingAttempt(instances, "longSide", "shortSide");
+      }
+
+      return {
+        plates: best.plates,
+        error: ""
+      };
+    }
+
+    function recalcPacking() {
+      for (const obj of state.objects) {
+        if (obj.geometry) {
+          const size = obj.geometry.boundingBoxMm;
+          if (size.x > BED.x || size.z > BED.z || size.y > BED.y) {
+            obj.valid = false;
+            obj.error = `Excede el volumen máximo 256×256×256 mm. Tamaño orientado: ${size.x.toFixed(1)} × ${size.z.toFixed(1)} × ${size.y.toFixed(1)} mm.`;
+          } else if (!obj.error || obj.error.includes("Excede el volumen")) {
+            obj.valid = true;
+            obj.error = "";
+          }
+        }
+      }
+
+      const allInstances = buildInstancesForPacking();
+
+      const groups = new Map();
+
+      for (const instance of allInstances) {
+        const obj = state.objects.find((item) => item.id === instance.objectId);
+        if (!obj) continue;
+
+        /*
+          Production rule:
+          different material = different print bed/job.
+          Color stays in the same material family, but material changes require
+          a separate setup/leveling/material loading cycle.
+        */
+        const groupKey = obj.materialKey;
+
+        if (!groups.has(groupKey)) {
+          groups.set(groupKey, []);
+        }
+
+        groups.get(groupKey).push(instance);
+      }
+
+      const allPlates = [];
+      let packingError = "";
+
+      for (const [materialKey, instances] of groups.entries()) {
+        const result = packInstances(instances);
+
+        if (result.error && !packingError) {
+          packingError = result.error;
+        }
+
+        for (const plate of result.plates) {
+          plate.materialKey = materialKey;
+          allPlates.push(plate);
+        }
+      }
+
+      state.plates = allPlates;
+
+      if (state.selectedPlateIndex >= state.plates.length) {
+        state.selectedPlateIndex = Math.max(0, state.plates.length - 1);
+      }
+
+      return packingError;
+    }
+
+    function renderQuote() {
+      const totals = calculateTotals();
+      const hasObjects = state.objects.length > 0;
+
+      $("emptyQuote").classList.toggle("hidden", hasObjects);
+      $("quoteContent").classList.toggle("hidden", !hasObjects);
+
+      if (!hasObjects) {
+        $("previewQuantityNote").textContent = "Sube modelos para ver la distribución.";
+        return;
+      }
+
+      $("totalPrice").textContent = formatCurrency(totals.totalPrice);
+      $("totalPieces").textContent = totals.totalPieces;
+      $("totalPlates").textContent = totals.totalPlates || 0;
+      $("totalMaterial").textContent = `${totals.totalMaterial.toFixed(0)} g`;
+      $("totalHours").textContent = formatDurationFromHours(totals.totalHours);
+
+      $("priceSub").textContent =
+        `Cotización no itemizada · ${totals.totalPieces} pieza${totals.totalPieces !== 1 ? "s" : ""}`;
+
+      const slicerStatus = $("slicerStatusText");
+      if (slicerStatus) {
+        if (state.slicer.status === "verified") slicerStatus.textContent = "Cálculo actualizado";
+        else if (state.slicer.status === "checking") slicerStatus.textContent = "Calculando...";
+        else if (state.slicer.status === "error") slicerStatus.textContent = "Revisar archivo";
+        else slicerStatus.textContent = "Calculado automáticamente";
+      }
+
+      const slicerErrorBox = $("slicerErrorBox");
+      if (slicerErrorBox) {
+        if (state.slicer.errorMessage) {
+          slicerErrorBox.textContent = state.slicer.errorMessage;
+          slicerErrorBox.classList.remove("hidden");
+        } else {
+          slicerErrorBox.textContent = "";
+          slicerErrorBox.classList.add("hidden");
+        }
+      }
+    }
+
+    function renderPlateSelector() {
+      const selector = $("plateSelector");
+
+      if (!state.plates.length) {
+        selector.innerHTML = `<option value="0">Cama 1</option>`;
+        selector.value = "0";
+        selector.disabled = true;
+        return;
+      }
+
+      selector.disabled = false;
+      selector.innerHTML = state.plates.map((plate, index) => {
+        const matLabel = plate.materialKey ? ` · ${plate.materialKey}` : "";
+        return `<option value="${index}" ${index === state.selectedPlateIndex ? "selected" : ""}>Cama ${index + 1} de ${state.plates.length}${matLabel}</option>`;
+      }).join("");
+
+      selector.value = String(state.selectedPlateIndex);
+    }
+
+    function renderPackingStatus(packingError = "") {
+      const status = $("packingStatus");
+      const rows = [];
+
+      if (packingError) {
+        rows.push(`<div class="status-row bad">${packingError}</div>`);
+      }
+
+      for (const obj of state.objects) {
+        if (obj.error) {
+          rows.push(`<div class="status-row bad">${obj.name}: ${obj.error}</div>`);
+        }
+      }
+
+      if (state.objects.some((obj) => ["step", "stp"].includes(obj.ext))) {
+        rows.push(`<div class="status-row bad">Para una cotización precisa, sube STL, OBJ o 3MF.</div>`);
+      }
+
+      status.innerHTML = rows.join("");
+    }
+
+    function scheduleSlicerBatch() {
+      clearTimeout(state.slicer.timer);
+      state.slicer.timer = setTimeout(() => requestSlicerBatch(), 700);
+    }
+
+    function clearSlicerEstimates() {
+      for (const obj of state.objects) {
+        obj.slicerEstimate = null;
+      }
+      state.slicer.jobEstimate = null;
+      state.slicer.errorMessage = "";
+      state.slicer.status = "idle";
+    }
+
+    async function requestSlicerBatch() {
+      const eligible = state.objects.filter((obj) =>
+        obj.file &&
+        obj.valid &&
+        ["stl", "obj", "3mf"].includes(obj.ext)
+      );
+
+      if (!eligible.length) {
+        state.slicer.status = "idle";
+        state.slicer.jobEstimate = null;
+        renderQuote();
+        return;
+      }
+
+      const formData = new FormData();
+      const metadata = [];
+
+      for (const obj of eligible) {
+        const params = getParams(obj);
+        formData.append("files", obj.file, obj.name);
+        metadata.push({
+          id: obj.id,
+          filename: obj.name,
+          quantity: obj.quantity,
+          material: obj.materialKey,
+          color: obj.color,
+          infill: params.infill,
+          layerHeight: params.layerHeight,
+          walls: params.walls,
+          supports: params.supports
+        });
+      }
+
+      formData.append("metadata", JSON.stringify(metadata));
+
+      try {
+        state.slicer.status = "checking";
+        state.slicer.jobEstimate = null;
+        renderQuote();
+
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 30000);
+
+        const response = await fetch(SLICER_ENDPOINT, {
+          method: "POST",
+          body: formData,
+          signal: controller.signal
+        });
+
+        clearTimeout(timeout);
+
+        if (!response.ok) {
+          let message = `Error del backend slicer (${response.status}).`;
+
+          try {
+            const errorData = await response.json();
+            const detail = errorData.detail || errorData.message || errorData;
+
+            if (typeof detail === "string") {
+              message = detail;
+            } else if (detail && typeof detail === "object") {
+              message = detail.message || JSON.stringify(detail);
+              if (response.status === 400) {
+                message += " Revisa también el terminal de PowerShell: ahora imprimirá el detalle exacto entre [BACKEND ERROR] y [/BACKEND ERROR].";
+              }
+            }
+          } catch (parseError) {
+            message = await response.text();
+          }
+
+          throw new Error(message);
+        }
+
+        const data = await response.json();
+
+        if (
+          !data ||
+          !Number.isFinite(Number(data.totalPrintHours)) ||
+          !Number.isFinite(Number(data.totalFilamentGrams)) ||
+          Number(data.totalFilamentGrams) <= 0.01
+        ) {
+          throw new Error("El slicer no devolvió material válido. Se usará la estimación local.");
+        }
+
+        state.slicer.jobEstimate = {
+          totalPrintHours: Number(data.totalPrintHours),
+          totalFilamentGrams: Number(data.totalFilamentGrams),
+          totalPrice: Number(data.totalPrice || 0),
+          totalPlates: Number(data.totalPlates || 0),
+          source: data.source || "slicer"
+        };
+
+        state.slicer.errorMessage = "";
+        state.slicer.status = "verified";
+        renderQuote();
+      } catch (error) {
+        state.slicer.jobEstimate = null;
+        state.slicer.errorMessage = error.message || "No se pudo calcular con el slicer. Se usa estimación técnica local.";
+        state.slicer.status = "error";
+        renderQuote();
+      }
+    }
+
+    function recalcAndRender(rebuildList = true) {
+      const packingError = recalcPacking();
+
+      if (rebuildList) {
+        renderObjectsList();
+      }
+
+      renderPlateSelector();
+      renderPackingStatus(packingError);
+      renderQuote();
+
+      if (window.renderPlatePreview) {
+        window.renderPlatePreview();
+      }
+    }
+
+    async function addFiles(files) {
+      hideUploadNotice();
+
+      const validFiles = [];
+
+      for (const file of files) {
+        const ext = getFileExtension(file.name);
+        if (!ACCEPTED_EXTENSIONS.includes(ext)) {
+          showUploadNotice(`Formato no compatible: ${file.name}. Usa STL, 3MF, OBJ, STEP o STP.`, "bad");
+          continue;
+        }
+
+        const record = createObjectRecord(file);
+        state.objects.push(record);
+        validFiles.push(record);
+      }
+
+      renderObjectsList();
+      recalcAndRender(false);
+
+      for (const record of validFiles) {
+        if (window.loadObjectGeometry) {
+          await window.loadObjectGeometry(record);
+        }
+      }
+
+      recalcAndRender(true);
+      clearSlicerEstimates();
+      scheduleSlicerBatch();
+    }
+
+    $("fileInput").addEventListener("change", async (event) => {
+      const files = Array.from(event.target.files || []);
+      event.target.value = "";
+      await addFiles(files);
+    });
+
+    $("plateSelector").addEventListener("change", (event) => {
+      state.selectedPlateIndex = Number(event.target.value) || 0;
+      if (window.renderPlatePreview) window.renderPlatePreview();
+    });
+
+    $("requestBtn").addEventListener("click", () => {
+      const totals = calculateTotals();
+
+      const message = [
+        "Cotización preparada",
+        "",
+        `Total estimado: ${formatCurrency(totals.totalPrice)}`,
+        `Piezas: ${totals.totalPieces}`,
+        `Lotes de producción: ${totals.totalPlates}`,
+        `Tiempo estimado: ${formatDurationFromHours(totals.totalHours)}`,
+        "",
+        "El precio está sujeto a revisión final antes de iniciar producción."
+      ].join("\n");
+
+      alert(message);
+    });
+
+    bindObjectListEvents();
+    recalcAndRender(true);
+  </script>
+
+  <script type="module">
+    import * as THREE from "three";
+    import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+    import { STLLoader } from "three/addons/loaders/STLLoader.js";
+    import { OBJLoader } from "three/addons/loaders/OBJLoader.js";
+    import { ThreeMFLoader } from "three/addons/loaders/3MFLoader.js";
+
+    let scene;
+    let camera;
+    let renderer;
+    let controls;
+    let bedMesh;
+    let plateGroup;
+
+    const viewerCanvas = document.getElementById("viewerCanvas");
+    const resetViewBtn = document.getElementById("resetViewBtn");
+
+    const BED_NORMAL = new THREE.Vector3(0, -1, 0);
+
+    function ensureViewer() {
+      if (renderer) return;
+
+      scene = new THREE.Scene();
+      scene.background = new THREE.Color(0x020617);
+
+      camera = new THREE.PerspectiveCamera(45, 1, 0.1, 100000);
+      camera.position.set(360, 260, 360);
+
+      renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
+      renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+      renderer.shadowMap.enabled = true;
+      renderer.domElement.style.width = "100%";
+      renderer.domElement.style.height = "100%";
+      viewerCanvas.innerHTML = "";
+      viewerCanvas.appendChild(renderer.domElement);
+
+      controls = new OrbitControls(camera, renderer.domElement);
+      controls.enableDamping = true;
+      controls.dampingFactor = 0.08;
+      controls.target.set(0, 0, 0);
+
+      const ambientLight = new THREE.AmbientLight(0xffffff, 0.65);
+      scene.add(ambientLight);
+
+      const keyLight = new THREE.DirectionalLight(0xffffff, 1.25);
+      keyLight.position.set(200, 280, 180);
+      scene.add(keyLight);
+
+      const fillLight = new THREE.DirectionalLight(0x93c5fd, 0.5);
+      fillLight.position.set(-220, -100, 160);
+      scene.add(fillLight);
+
+      const bedGeometry = new THREE.BoxGeometry(BED.x, 2, BED.z);
+      const bedMaterial = new THREE.MeshStandardMaterial({
+        color: 0x1e293b,
+        metalness: 0.05,
+        roughness: 0.6
+      });
+      bedMesh = new THREE.Mesh(bedGeometry, bedMaterial);
+      bedMesh.position.y = -1.5;
+      scene.add(bedMesh);
+
+      const grid = new THREE.GridHelper(BED.x, 16, 0x60a5fa, 0x334155);
+      grid.position.y = 0.1;
+      scene.add(grid);
+
+      const axes = new THREE.AxesHelper(80);
+      axes.position.set(-BED.x / 2, 0.5, -BED.z / 2);
+      scene.add(axes);
+
+      window.addEventListener("resize", resizeViewer);
+      resizeViewer();
+      animate();
+    }
+
+    function resizeViewer() {
+      if (!renderer || !camera) return;
+
+      const width = Math.max(1, viewerCanvas.clientWidth || viewerCanvas.getBoundingClientRect().width);
+      const height = Math.max(1, viewerCanvas.clientHeight || 300);
+
+      camera.aspect = width / height;
+      camera.updateProjectionMatrix();
+      renderer.setSize(width, height, false);
+    }
+
+    function animate() {
+      requestAnimationFrame(animate);
+      if (controls) controls.update();
+      if (renderer && scene && camera) renderer.render(scene, camera);
+    }
+
+    function frameBed() {
+      camera.position.set(360, 260, 360);
+      controls.target.set(0, 0, 0);
+      controls.update();
+      resizeViewer();
+    }
+
+    function frameObject(object) {
+      if (!object) {
+        frameBed();
+        return;
+      }
+
+      object.updateMatrixWorld(true);
+      const box = new THREE.Box3().setFromObject(object);
+
+      if (!Number.isFinite(box.min.x) || box.isEmpty()) {
+        frameBed();
+        return;
+      }
+
+      const size = new THREE.Vector3();
+      const center = new THREE.Vector3();
+      box.getSize(size);
+      box.getCenter(center);
+
+      const maxDim = Math.max(size.x, size.y, size.z, 8);
+      const distance = maxDim * 1.85;
+
+      camera.near = Math.max(maxDim / 1000, 0.01);
+      camera.far = Math.max(maxDim * 80, 1000);
+      camera.updateProjectionMatrix();
+
+      camera.position.set(
+        center.x + distance,
+        center.y + distance * 0.72,
+        center.z + distance
+      );
+
+      controls.target.set(center.x, center.y + size.y * 0.12, center.z);
+      controls.update();
+      resizeViewer();
+    }
+
+    function getExtension(filename = "") {
+      const parts = filename.split(".");
+      return parts.length > 1 ? parts.pop().toLowerCase() : "";
+    }
+
+    function normalizeMaterials(object, colorName = "Azul") {
+      const color = COLOR_HEX[colorName] || 0x60a5fa;
+
+      object.traverse((child) => {
+        if (child.isMesh) {
+          child.castShadow = true;
+          child.receiveShadow = true;
+          child.material = new THREE.MeshStandardMaterial({
+            color,
+            metalness: 0.08,
+            roughness: 0.55,
+            transparent: colorName === "Transparente",
+            opacity: colorName === "Transparente" ? 0.58 : 1
+          });
+        }
+      });
+    }
+
+    function disposeObject(object) {
+      if (!object) return;
+
+      object.traverse?.((child) => {
+        if (child.geometry && !child.userData?.sharedGeometry) child.geometry.dispose?.();
+        if (child.material && !child.userData?.sharedMaterial) {
+          if (Array.isArray(child.material)) {
+            child.material.forEach((mat) => mat.dispose?.());
+          } else {
+            child.material.dispose?.();
+          }
+        }
+      });
+    }
+
+    function getTriangles(object) {
+      const triangles = [];
+      object.updateMatrixWorld(true);
+
+      object.traverse((child) => {
+        if (!child.isMesh || !child.geometry) return;
+
+        const geometry = child.geometry;
+        const position = geometry.attributes.position;
+        if (!position) return;
+
+        const index = geometry.index;
+        const matrixWorld = child.matrixWorld;
+
+        const a = new THREE.Vector3();
+        const b = new THREE.Vector3();
+        const c = new THREE.Vector3();
+
+        const readVertex = (vertexIndex, target) => {
+          target.fromBufferAttribute(position, vertexIndex).applyMatrix4(matrixWorld);
+          return target;
+        };
+
+        const triangleCount = index ? index.count / 3 : position.count / 3;
+
+        for (let i = 0; i < triangleCount; i++) {
+          const ia = index ? index.getX(i * 3) : i * 3;
+          const ib = index ? index.getX(i * 3 + 1) : i * 3 + 1;
+          const ic = index ? index.getX(i * 3 + 2) : i * 3 + 2;
+
+          const va = readVertex(ia, a).clone();
+          const vb = readVertex(ib, b).clone();
+          const vc = readVertex(ic, c).clone();
+
+          const ab = new THREE.Vector3().subVectors(vb, va);
+          const ac = new THREE.Vector3().subVectors(vc, va);
+          const cross = new THREE.Vector3().crossVectors(ab, ac);
+          const doubleArea = cross.length();
+
+          if (!Number.isFinite(doubleArea) || doubleArea <= 1e-8) continue;
+
+          const normal = cross.clone().normalize();
+          const area = doubleArea * 0.5;
+          const centroid = new THREE.Vector3()
+            .addVectors(va, vb)
+            .add(vc)
+            .multiplyScalar(1 / 3);
+
+          triangles.push({ a: va, b: vb, c: vc, normal, area, centroid });
+        }
+      });
+
+      return triangles;
+    }
+
+    function vectorKey(normal, precision = 0.08) {
+      const nx = Math.round(normal.x / precision);
+      const ny = Math.round(normal.y / precision);
+      const nz = Math.round(normal.z / precision);
+      return `${nx},${ny},${nz}`;
+    }
+
+    function buildCandidateNormals(triangles) {
+      const groups = new Map();
+
+      for (const triangle of triangles) {
+        const key = vectorKey(triangle.normal);
+
+        if (!groups.has(key)) {
+          groups.set(key, {
+            normalSum: new THREE.Vector3(),
+            area: 0,
+            triangles: 0
+          });
+        }
+
+        const group = groups.get(key);
+        group.normalSum.addScaledVector(triangle.normal, triangle.area);
+        group.area += triangle.area;
+        group.triangles += 1;
+      }
+
+      const candidates = [...groups.values()]
+        .filter((group) => group.area > 1e-6)
+        .map((group) => ({
+          normal: group.normalSum.normalize(),
+          contactAreaMm2: group.area,
+          triangles: group.triangles
+        }))
+        .sort((a, b) => b.contactAreaMm2 - a.contactAreaMm2)
+        .slice(0, 36);
+
+      const axisCandidates = [
+        new THREE.Vector3(1, 0, 0),
+        new THREE.Vector3(-1, 0, 0),
+        new THREE.Vector3(0, 1, 0),
+        new THREE.Vector3(0, -1, 0),
+        new THREE.Vector3(0, 0, 1),
+        new THREE.Vector3(0, 0, -1)
+      ].map((normal) => ({ normal, contactAreaMm2: 0, triangles: 0 }));
+
+      return [...candidates, ...axisCandidates];
+    }
+
+    function estimateSolidVolumeCm3(triangles) {
+      let signedVolumeMm3 = 0;
+
+      for (const t of triangles) {
+        signedVolumeMm3 += t.a.dot(new THREE.Vector3().crossVectors(t.b, t.c)) / 6;
+      }
+
+      const volumeMm3 = Math.abs(signedVolumeMm3);
+      return volumeMm3 > 0 ? volumeMm3 / 1000 : 0;
+    }
+
+    function analyzeOrientation(triangles, candidate) {
+      const rotation = new THREE.Quaternion().setFromUnitVectors(candidate.normal.clone().normalize(), BED_NORMAL);
+
+      let minY = Infinity;
+      let maxY = -Infinity;
+      let minX = Infinity;
+      let maxX = -Infinity;
+      let minZ = Infinity;
+      let maxZ = -Infinity;
+
+      const rotated = triangles.map((t) => {
+        const a = t.a.clone().applyQuaternion(rotation);
+        const b = t.b.clone().applyQuaternion(rotation);
+        const c = t.c.clone().applyQuaternion(rotation);
+        const normal = t.normal.clone().applyQuaternion(rotation).normalize();
+        const centroid = t.centroid.clone().applyQuaternion(rotation);
+
+        for (const v of [a, b, c]) {
+          minY = Math.min(minY, v.y);
+          maxY = Math.max(maxY, v.y);
+          minX = Math.min(minX, v.x);
+          maxX = Math.max(maxX, v.x);
+          minZ = Math.min(minZ, v.z);
+          maxZ = Math.max(maxZ, v.z);
+        }
+
+        return { a, b, c, normal, area: t.area, centroid };
+      });
+
+      const yOffset = -minY;
+      const printHeightMm = maxY - minY;
+      const footprintX = maxX - minX;
+      const footprintZ = maxZ - minZ;
+
+      let contactAreaMm2 = 0;
+      let overhangAreaMm2 = 0;
+      let supportVolumeMm3 = 0;
+
+      for (const t of rotated) {
+        const cy = t.centroid.y + yOffset;
+
+        const isBedContact = cy < 0.8 && t.normal.y < -0.9;
+        if (isBedContact) contactAreaMm2 += t.area;
+
+        const isDownwardOverhang = t.normal.y < -0.55 && cy > 0.8;
+        if (isDownwardOverhang) {
+          overhangAreaMm2 += t.area;
+          const supportDensity = 0.16;
+          supportVolumeMm3 += t.area * cy * supportDensity;
+        }
+      }
+
+      const contactAreaCm2 = contactAreaMm2 / 100;
+      const overhangAreaCm2 = overhangAreaMm2 / 100;
+      const supportVolumeCm3 = Math.min(supportVolumeMm3 / 1000, 9999);
+
+      const oversizePenalty =
+        (footprintX > BED.x || footprintZ > BED.z || printHeightMm > BED.y)
+          ? 100000
+          : 0;
+
+      const footprintAreaCm2 = Math.max((footprintX * footprintZ) / 100, 0.01);
+      const footprintMin = Math.max(Math.min(footprintX, footprintZ), 0.01);
+      const footprintMax = Math.max(Math.max(footprintX, footprintZ), 0.01);
+
+      /*
+        Production-oriented orientation score:
+        - strongly penalize tall / standing-on-edge orientations
+        - prefer low, stable, bed-friendly orientations
+        - still penalize supports and overhangs
+        - reward contact area, but never enough to justify a very tall part
+      */
+      const heightPenalty = printHeightMm * 3.5;
+      const tallSlenderPenalty = Math.max(0, printHeightMm - footprintMin * 0.75) * 6.0;
+      const extremeVerticalPenalty = printHeightMm > footprintMax * 0.65 ? printHeightMm * 8.0 : 0;
+      const weakContactPenalty = contactAreaCm2 < footprintAreaCm2 * 0.08 ? 250 : 0;
+
+      const score =
+        supportVolumeCm3 * 5.0 +
+        overhangAreaCm2 * 0.45 +
+        heightPenalty +
+        tallSlenderPenalty +
+        extremeVerticalPenalty +
+        weakContactPenalty -
+        contactAreaCm2 * 0.35 +
+        oversizePenalty;
+
+      return {
+        rotation,
+        score,
+        contactAreaCm2,
+        overhangAreaCm2,
+        supportVolumeCm3,
+        printHeightMm,
+        footprintX,
+        footprintZ,
+        candidateSurfaceAreaCm2: candidate.contactAreaMm2 / 100
+      };
+    }
+
+    function boxDimensionsAfterQuaternion(object, quaternion) {
+      const temp = object.clone(true);
+      temp.applyQuaternion(quaternion);
+      temp.updateMatrixWorld(true);
+
+      const box = new THREE.Box3().setFromObject(temp);
+      const size = new THREE.Vector3();
+      box.getSize(size);
+
+      return {
+        x: size.x,
+        y: size.y,
+        z: size.z
+      };
+    }
+
+    function getAxisFlatnessCandidates(object) {
+      /*
+        Extra production heuristic:
+        For pieces like gears, pulleys, washers and pinions, two dimensions are large
+        and one dimension is small. The small dimension should become the print height.
+      */
+      object.updateMatrixWorld(true);
+      const box = new THREE.Box3().setFromObject(object);
+      const size = new THREE.Vector3();
+      box.getSize(size);
+
+      const dims = [
+        { axis: new THREE.Vector3(1, 0, 0), value: size.x },
+        { axis: new THREE.Vector3(0, 1, 0), value: size.y },
+        { axis: new THREE.Vector3(0, 0, 1), value: size.z }
+      ].sort((a, b) => a.value - b.value);
+
+      const smallest = dims[0];
+      const middle = dims[1];
+      const largest = dims[2];
+
+      /*
+        Apply this special rule only to disk-like parts:
+        gear, pinion, pulley, washer, wheel.
+
+        A rack is NOT disk-like because its largest dimension is much longer
+        than its middle dimension. Without this guard, the rack can be mistaken
+        for a thin disk and get a bad orientation.
+      */
+      const thinEnough =
+        smallest.value > 0 &&
+        middle.value / smallest.value >= 1.8 &&
+        largest.value / smallest.value >= 1.8;
+
+      const diskLike =
+        middle.value > 0 &&
+        largest.value / middle.value <= 1.65;
+
+      const looksLikeDiskOrGear = thinEnough && diskLike;
+
+      if (!looksLikeDiskOrGear) return [];
+
+      return [
+        { normal: smallest.axis.clone(), contactAreaMm2: 0, triangles: 0, forceLow: true },
+        { normal: smallest.axis.clone().multiplyScalar(-1), contactAreaMm2: 0, triangles: 0, forceLow: true }
+      ];
+    }
+
+    function autoOrientObject(object) {
+      const source = object.clone(true);
+      source.updateMatrixWorld(true);
+
+      const triangles = getTriangles(source);
+      if (!triangles.length) {
+        return null;
+      }
+
+      const solidVolumeCm3 = estimateSolidVolumeCm3(triangles);
+      const candidates = [
+        ...getAxisFlatnessCandidates(object),
+        ...buildCandidateNormals(triangles)
+      ];
+
+      const evaluated = [];
+
+      for (const candidate of candidates) {
+        const result = analyzeOrientation(triangles, candidate);
+
+        const fitsBed =
+          result.footprintX <= BED.x &&
+          result.footprintZ <= BED.z &&
+          result.printHeightMm <= BED.y;
+
+        evaluated.push({ ...result, fitsBed });
+      }
+
+      if (!evaluated.length) return null;
+
+      const valid = evaluated.filter((item) => item.fitsBed);
+      const pool = valid.length ? valid : evaluated;
+
+      /*
+        Main production rule:
+        maximize real contact area with the print bed.
+
+        Tie-breakers only apply among orientations with nearly the same
+        contact area. This keeps racks, pinions, wheels and flat brackets
+        on their most stable printable face.
+      */
+      const maxContactArea = Math.max(...pool.map((item) => item.contactAreaCm2 || 0));
+
+      let contactPool = pool.filter((item) => {
+        if (maxContactArea <= 0) return true;
+        return item.contactAreaCm2 >= maxContactArea * 0.97;
+      });
+
+      if (!contactPool.length) contactPool = pool;
+
+      let best = null;
+
+      for (const result of contactPool) {
+        const tieBreakerScore =
+          result.supportVolumeCm3 * 5.0 +
+          result.overhangAreaCm2 * 0.45 +
+          result.printHeightMm * 0.75 -
+          result.contactAreaCm2 * 0.25 +
+          (result.forceLow ? -20 : 0);
+
+        const adjustedScore =
+          -result.contactAreaCm2 * 100000 +
+          tieBreakerScore;
+
+        if (!best || adjustedScore < best.adjustedScore) {
+          best = { ...result, adjustedScore };
+        }
+      }
+
+      if (!best) return null;
+
+      object.applyQuaternion(best.rotation);
+      object.updateMatrixWorld(true);
+
+      const box = new THREE.Box3().setFromObject(object);
+      object.position.y += -box.min.y;
+      object.updateMatrixWorld(true);
+
+      const orientedBox = new THREE.Box3().setFromObject(object);
+      const size = new THREE.Vector3();
+      const center = new THREE.Vector3();
+
+      orientedBox.getSize(size);
+      orientedBox.getCenter(center);
+
+      object.position.x -= center.x;
+      object.position.z -= center.z;
+      object.position.y -= orientedBox.min.y;
+      object.updateMatrixWorld(true);
+
+      const bedCheckBox = new THREE.Box3().setFromObject(object);
+      if (Number.isFinite(bedCheckBox.min.y)) {
+        object.position.y += -bedCheckBox.min.y + 0.2;
+        object.updateMatrixWorld(true);
+      }
+
+      const finalBox = new THREE.Box3().setFromObject(object);
+      const finalSize = new THREE.Vector3();
+      finalBox.getSize(finalSize);
+
+      return {
+        solidVolumeCm3,
+        fallbackVolumeCm3: Math.max(1, (finalSize.x * finalSize.y * finalSize.z) / 1000 * 0.18),
+        supportVolumeCm3: best.supportVolumeCm3,
+        contactAreaCm2: best.contactAreaCm2,
+        overhangAreaCm2: best.overhangAreaCm2,
+        printHeightMm: finalSize.y,
+        candidateSurfaceAreaCm2: best.candidateSurfaceAreaCm2,
+        boundingBoxMm: {
+          x: finalSize.x,
+          y: finalSize.y,
+          z: finalSize.z
+        },
+        score: best.adjustedScore
+      };
+    }
+
+    function cloneForPreview(template, colorName) {
+      const clone = template.clone(true);
+      clone.traverse((child) => {
+        if (child.isMesh) {
+          child.userData.sharedGeometry = true;
+          child.userData.sharedMaterial = false;
+          child.material = new THREE.MeshStandardMaterial({
+            color: COLOR_HEX[colorName] || 0x60a5fa,
+            metalness: 0.08,
+            roughness: 0.55,
+            transparent: colorName === "Transparente",
+            opacity: colorName === "Transparente" ? 0.58 : 1
+          });
+        }
+      });
+      return clone;
+    }
+
+    function renderPlatePreview() {
+      ensureViewer();
+
+      if (plateGroup) {
+        scene.remove(plateGroup);
+        disposeObject(plateGroup);
+        plateGroup = null;
+      }
+
+      plateGroup = new THREE.Group();
+
+      const plate = state.plates[state.selectedPlateIndex];
+
+      if (!plate || !plate.placements.length) {
+        document.getElementById("previewQuantityNote").textContent = "No hay piezas válidas para mostrar.";
+        scene.add(plateGroup);
+        frameBed();
+        return;
+      }
+
+      for (const placement of plate.placements) {
+        const obj = state.objects.find((item) => item.id === placement.objectId);
+        if (!obj || !obj.template) continue;
+
+        const clone = cloneForPreview(obj.template, obj.color);
+
+        if (placement.rotated) {
+          clone.rotation.y += Math.PI / 2;
+        }
+
+        clone.position.set(0, 0, 0);
+        clone.updateMatrixWorld(true);
+
+        const initialBox = new THREE.Box3().setFromObject(clone);
+        const initialCenter = new THREE.Vector3();
+        initialBox.getCenter(initialCenter);
+
+        /*
+          The occupied rectangle includes margin. The real part is centered inside it
+          so margins remain balanced and objects do not visually touch.
+        */
+        const targetX = placement.x - BED.x / 2;
+        const targetZ = placement.z - BED.z / 2;
+
+        clone.position.x += targetX - initialCenter.x;
+        clone.position.z += targetZ - initialCenter.z;
+        clone.position.y += -initialBox.min.y + 0.35;
+
+        clone.updateMatrixWorld(true);
+
+        const finalBox = new THREE.Box3().setFromObject(clone);
+        if (Number.isFinite(finalBox.min.y)) {
+          clone.position.y += -finalBox.min.y + 0.35;
+        }
+
+        plateGroup.add(clone);
+      }
+
+      scene.add(plateGroup);
+
+      document.getElementById("previewQuantityNote").textContent =
+        `Mostrando cama ${state.selectedPlateIndex + 1} de ${state.plates.length}${plate.materialKey ? " · " + plate.materialKey : ""}. Piezas en esta cama: ${plate.placements.length}.`;
+
+      frameObject(plateGroup);
+    }
+
+    async function loadSTL(url) {
+      return new Promise((resolve, reject) => {
+        const loader = new STLLoader();
+        loader.load(
+          url,
+          (geometry) => {
+            geometry.computeVertexNormals();
+            const material = new THREE.MeshStandardMaterial({ color: 0x60a5fa });
+            const mesh = new THREE.Mesh(geometry, material);
+            resolve(mesh);
+          },
+          undefined,
+          reject
+        );
+      });
+    }
+
+    async function loadOBJ(url) {
+      return new Promise((resolve, reject) => {
+        const loader = new OBJLoader();
+        loader.load(url, resolve, undefined, reject);
+      });
+    }
+
+    async function load3MF(url) {
+      return new Promise((resolve, reject) => {
+        const loader = new ThreeMFLoader();
+        loader.load(url, resolve, undefined, reject);
+      });
+    }
+
+    async function loadObjectGeometry(record) {
+      ensureViewer();
+
+      const extension = getExtension(record.file.name);
+
+      if (extension === "step" || extension === "stp") {
+        record.loading = false;
+        record.valid = false;
+        record.warning = "Formato recibido, pendiente de revisión.";
+        record.error = "Para cotización automática inmediata, sube STL, OBJ o 3MF.";
+        return;
+      }
+
+      const url = URL.createObjectURL(record.file);
+
+      try {
+        let object;
+        if (extension === "stl") object = await loadSTL(url);
+        if (extension === "obj") object = await loadOBJ(url);
+        if (extension === "3mf") object = await load3MF(url);
+
+        if (!object) {
+          throw new Error("Formato no cargado.");
+        }
+
+        normalizeMaterials(object, record.color);
+
+        const analysis = autoOrientObject(object);
+        if (!analysis) {
+          throw new Error("No se pudo analizar la geometría.");
+        }
+
+        record.geometry = analysis;
+        record.template = object;
+        record.loading = false;
+        const currentGeometry = record.geometry || analysis;
+        record.valid =
+          currentGeometry.boundingBoxMm.x <= BED.x &&
+          currentGeometry.boundingBoxMm.z <= BED.z &&
+          currentGeometry.boundingBoxMm.y <= BED.y;
+
+        if (!record.valid) {
+          record.error = `Excede 256×256×256 mm. Tamaño orientado: ${currentGeometry.boundingBoxMm.x.toFixed(1)} × ${currentGeometry.boundingBoxMm.z.toFixed(1)} × ${currentGeometry.boundingBoxMm.y.toFixed(1)} mm.`;
+        } else {
+          record.error = "";
+          record.warning = "";
+        }
+      } catch (error) {
+        console.error(error);
+        record.loading = false;
+        record.valid = false;
+        record.error = "No se pudo cargar o analizar este modelo. Verifica que el archivo no esté dañado.";
+      } finally {
+        URL.revokeObjectURL(url);
+      }
+    }
+
+    resetViewBtn?.addEventListener("click", frameBed);
+
+    window.loadObjectGeometry = loadObjectGeometry;
+    window.renderPlatePreview = renderPlatePreview;
+
+    ensureViewer();
+    frameBed();
+  </script>
+</body>
+</html>

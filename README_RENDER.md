@@ -35,3 +35,16 @@ En Render selecciona:
 
 La app debe escuchar en `0.0.0.0` y en el puerto que Render pase por `PORT`.
 Este Dockerfile ya lo hace.
+
+
+## Precio solo desde slicer
+
+La interfaz no muestra precio calculado localmente por JavaScript.
+Cuando se suben modelos o se cambian parámetros, el precio permanece en estado
+"Calculando..." hasta que `/api/slice-batch` devuelve:
+
+- totalPrice válido,
+- totalFilamentGrams mayor que cero,
+- totalPrintHours válido.
+
+Si el slicer falla temporalmente, el frontend reintenta automáticamente.

@@ -543,6 +543,13 @@
       transform: none;
     }
 
+    .site-footer {
+      text-align: center;
+      color: var(--muted);
+      font-size: 13px;
+      padding: 22px 0 0;
+    }
+
     .status-list {
       display: grid;
       gap: 8px;
@@ -760,11 +767,15 @@
 
             <div id="slicerErrorBox" class="notice bad hidden"></div>
 
-            <button id="requestBtn" class="primary-btn" type="button">Solicitar cotización</button>
+            <button id="requestBtn" class="primary-btn" type="button" disabled>Solicitar cotización</button>
           </div>
         </article>
       </aside>
     </section>
+
+    <footer class="site-footer">
+      Reymildo Jiménez 2026
+    </footer>
   </main>
 
   <script>
@@ -890,6 +901,7 @@
       slicer: {
         status: "idle",
         timer: null,
+        retryTimer: null,
         jobEstimate: null,
         errorMessage: ""
       }
@@ -923,6 +935,18 @@
       }
 
       return `${h} h ${m} min`;
+    }
+
+    function hasValidSlicerResult() {
+      return Boolean(
+        state.slicer.jobEstimate &&
+        state.slicer.status === "verified" &&
+        Number.isFinite(Number(state.slicer.jobEstimate.totalPrintHours)) &&
+        Number.isFinite(Number(state.slicer.jobEstimate.totalFilamentGrams)) &&
+        Number(state.slicer.jobEstimate.totalFilamentGrams) > 0.01 &&
+        Number.isFinite(Number(state.slicer.jobEstimate.totalPrice)) &&
+        Number(state.slicer.jobEstimate.totalPrice) > 0
+      );
     }
 
     function getFileExtension(filename = "") {
@@ -1024,13 +1048,7 @@
         totalPieces += obj.quantity;
       }
 
-      if (
-        state.slicer.jobEstimate &&
-        state.slicer.status === "verified" &&
-        Number.isFinite(Number(state.slicer.jobEstimate.totalPrintHours)) &&
-        Number.isFinite(Number(state.slicer.jobEstimate.totalFilamentGrams)) &&
-        Number(state.slicer.jobEstimate.totalFilamentGrams) > 0.01
-      ) {
+      if (hasValidSlicerResult()) {
         const totalPrice = Math.max(150, Number(state.slicer.jobEstimate.totalPrice || 0));
 
         return {
@@ -1040,40 +1058,20 @@
           totalPrice,
           totalPlates: Number(state.slicer.jobEstimate.totalPlates || state.plates.length || 0),
           invalidCount: 0,
-          source: "slicer"
+          source: "slicer",
+          ready: true
         };
-      }
-
-      let totalMaterial = 0;
-      let totalHours = 0;
-      let totalPrice = 0;
-      let invalidCount = 0;
-
-      for (const obj of state.objects) {
-        const estimate = estimateByObject(obj);
-        if (!estimate) {
-          if (obj.file) invalidCount++;
-          continue;
-        }
-
-        totalMaterial += estimate.filamentGrams * obj.quantity;
-        totalHours += estimate.printHours * obj.quantity;
-        totalPrice += estimate.pricePerPiece * obj.quantity;
-      }
-
-      if (totalPieces > 0 && totalPrice > 0) {
-        totalPrice += Math.max(1, state.plates.length || 1) * SETUP_COST_PER_PLATE;
-        totalPrice = Math.max(150, totalPrice);
       }
 
       return {
         totalPieces,
-        totalMaterial,
-        totalHours,
-        totalPrice,
-        totalPlates: state.plates.length,
-        invalidCount,
-        source: "local"
+        totalMaterial: 0,
+        totalHours: 0,
+        totalPrice: 0,
+        totalPlates: state.plates.length || 0,
+        invalidCount: 0,
+        source: "pending",
+        ready: false
       };
     }
 
@@ -1820,35 +1818,36 @@
 
       if (!hasObjects) {
         $("previewQuantityNote").textContent = "Sube modelos para ver la distribución.";
+        if ($("requestBtn")) $("requestBtn").disabled = true;
         return;
       }
 
-      $("totalPrice").textContent = formatCurrency(totals.totalPrice);
-      $("totalPieces").textContent = totals.totalPieces;
-      $("totalPlates").textContent = totals.totalPlates || 0;
-      $("totalMaterial").textContent = `${totals.totalMaterial.toFixed(0)} g`;
-      $("totalHours").textContent = formatDurationFromHours(totals.totalHours);
+      const ready = Boolean(totals.ready);
 
-      $("priceSub").textContent =
-        `Cotización no itemizada · ${totals.totalPieces} pieza${totals.totalPieces !== 1 ? "s" : ""}`;
+      $("totalPrice").textContent = ready ? formatCurrency(totals.totalPrice) : "Calculando...";
+      $("totalPieces").textContent = totals.totalPieces;
+      $("totalPlates").textContent = ready ? (totals.totalPlates || 0) : "—";
+      $("totalMaterial").textContent = ready ? `${totals.totalMaterial.toFixed(0)} g` : "—";
+      $("totalHours").textContent = ready ? formatDurationFromHours(totals.totalHours) : "—";
+
+      $("priceSub").textContent = ready
+        ? `Cotización actualizada · ${totals.totalPieces} pieza${totals.totalPieces !== 1 ? "s" : ""}`
+        : "Procesando cotización con slicer...";
 
       const slicerStatus = $("slicerStatusText");
       if (slicerStatus) {
-        if (state.slicer.status === "verified") slicerStatus.textContent = "Cálculo actualizado";
-        else if (state.slicer.status === "checking") slicerStatus.textContent = "Calculando...";
-        else if (state.slicer.status === "error") slicerStatus.textContent = "Revisar archivo";
-        else slicerStatus.textContent = "Calculado automáticamente";
+        if (ready) slicerStatus.textContent = "Cálculo actualizado";
+        else slicerStatus.textContent = "Calculando...";
       }
 
       const slicerErrorBox = $("slicerErrorBox");
       if (slicerErrorBox) {
-        if (state.slicer.errorMessage) {
-          slicerErrorBox.textContent = state.slicer.errorMessage;
-          slicerErrorBox.classList.remove("hidden");
-        } else {
-          slicerErrorBox.textContent = "";
-          slicerErrorBox.classList.add("hidden");
-        }
+        slicerErrorBox.textContent = "";
+        slicerErrorBox.classList.add("hidden");
+      }
+
+      if ($("requestBtn")) {
+        $("requestBtn").disabled = !ready;
       }
     }
 
@@ -1903,6 +1902,7 @@
       }
       state.slicer.jobEstimate = null;
       state.slicer.errorMessage = "";
+      clearTimeout(state.slicer.retryTimer);
       state.slicer.status = "idle";
     }
 
@@ -2003,9 +2003,16 @@
         renderQuote();
       } catch (error) {
         state.slicer.jobEstimate = null;
-        state.slicer.errorMessage = error.message || "No se pudo calcular con el slicer. Se usa estimación técnica local.";
-        state.slicer.status = "error";
+        state.slicer.errorMessage = "";
+        state.slicer.status = "checking";
         renderQuote();
+
+        clearTimeout(state.slicer.retryTimer);
+        state.slicer.retryTimer = setTimeout(() => {
+          if (state.objects.length) {
+            requestSlicerBatch();
+          }
+        }, 5000);
       }
     }
 
@@ -2069,6 +2076,10 @@
 
     $("requestBtn").addEventListener("click", () => {
       const totals = calculateTotals();
+
+      if (!totals.ready) {
+        return;
+      }
 
       const message = [
         "Cotización preparada",

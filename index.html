@@ -914,22 +914,22 @@
           <div class="modal-grid">
             <div class="full">
               <label class="field-label" for="customerName">Nombre o empresa</label>
-              <input id="customerName" type="text" placeholder="Ej. Reymildo Jiménez / PrototiposRD" autocomplete="name" />
+              <input id="customerName" type="text" maxlength="120" placeholder="Ej. Reymildo Jiménez / PrototiposRD" autocomplete="name" />
             </div>
 
             <div>
               <label class="field-label" for="customerEmail">Correo electrónico</label>
-              <input id="customerEmail" type="email" placeholder="correo@ejemplo.com" autocomplete="email" />
+              <input id="customerEmail" type="email" maxlength="254" required placeholder="correo@ejemplo.com" autocomplete="email" />
             </div>
 
             <div>
               <label class="field-label" for="customerPhone">Teléfono / WhatsApp</label>
-              <input id="customerPhone" type="tel" placeholder="809-000-0000" autocomplete="tel" />
+              <input id="customerPhone" type="tel" maxlength="40" required placeholder="809-000-0000" autocomplete="tel" />
             </div>
 
             <div class="full modal-field-full">
               <label class="field-label" for="customerNotes">Notas del proyecto</label>
-              <textarea id="customerNotes" placeholder="Uso de la pieza, urgencia, acabado deseado, tolerancias, observaciones..."></textarea>
+              <textarea id="customerNotes" maxlength="2000" placeholder="Uso de la pieza, urgencia, acabado deseado, tolerancias, observaciones..."></textarea>
             </div>
           </div>
 
@@ -955,8 +955,6 @@
       Variables internas de producción.
       No se muestran al cliente en la interfaz.
     */
-    const DEFAULT_FILAMENT_PRICE_PER_GRAM = 2.0;
-    const TPU_FILAMENT_PRICE_PER_GRAM = 3.0;
     const MACHINE_PRICE_PER_HOUR = 30.0;
     const PROFIT_MULTIPLIER = 1.6;
     const ELECTRICITY_RATE_PER_KWH = 8.59;
@@ -965,43 +963,27 @@
     const PACKING_GAP_MM = 8;
     const SLICER_ENDPOINT = "/api/slice-batch";
 
-    const MATERIALS = {
-      PLA: {
-        name: "PLA",
-        description: "Económico, fácil de imprimir y bueno para prototipos o piezas estéticas.",
-        pricePerGram: DEFAULT_FILAMENT_PRICE_PER_GRAM,
-        densityFactor: 1.0,
-        colors: ["Blanco", "Negro", "Gris", "Rojo", "Azul", "Verde"]
-      },
-      PETG: {
-        name: "PETG",
-        description: "Más resistente que PLA, buena opción para piezas funcionales generales.",
-        pricePerGram: DEFAULT_FILAMENT_PRICE_PER_GRAM,
-        densityFactor: 1.08,
-        colors: ["Transparente", "Negro", "Blanco", "Azul", "Rojo"]
-      },
-      ABS: {
-        name: "ABS",
-        description: "Resistente a temperatura moderada, útil para piezas técnicas.",
-        pricePerGram: DEFAULT_FILAMENT_PRICE_PER_GRAM,
-        densityFactor: 0.95,
-        colors: ["Negro", "Blanco", "Gris", "Rojo"]
-      },
-      TPU: {
-        name: "TPU",
-        description: "Flexible, recomendado para piezas elásticas o protectores.",
-        pricePerGram: TPU_FILAMENT_PRICE_PER_GRAM,
-        densityFactor: 1.15,
-        colors: ["Negro", "Transparente", "Rojo", "Azul"]
-      },
-      NYLON: {
-        name: "Nylon",
-        description: "Alta resistencia mecánica, ideal para piezas exigentes.",
-        pricePerGram: DEFAULT_FILAMENT_PRICE_PER_GRAM,
-        densityFactor: 1.12,
-        colors: ["Natural", "Negro"]
+    let MATERIALS = {};
+
+    async function loadPublicMaterials() {
+      try {
+        const response = await fetch("/api/materials");
+        if (!response.ok) {
+          showUploadNotice("No se pudo cargar el catálogo de materiales. Contacta al administrador.", "bad");
+          return;
+        }
+
+        const data = await response.json();
+        MATERIALS = data.materials || {};
+
+        if (!Object.keys(MATERIALS).length) {
+          showUploadNotice("No hay materiales disponibles actualmente. Contacta al administrador.", "warn");
+        }
+      } catch (error) {
+        console.warn("No se pudo cargar catálogo de materiales", error);
+        showUploadNotice("No se pudo cargar el catálogo de materiales. Contacta al administrador.", "bad");
       }
-    };
+    }
 
     const BASIC_USES = {
       functional: {
@@ -1261,6 +1243,8 @@
 
       const params = getParams(obj);
       const material = MATERIALS[obj.materialKey];
+      if (!material) return null;
+
       const baseVolumeCm3 = Math.max(obj.geometry.solidVolumeCm3 || obj.geometry.fallbackVolumeCm3 || 0, 0);
 
       if (!baseVolumeCm3) return null;
@@ -1370,7 +1354,11 @@
 
     function createObjectRecord(file) {
       const ext = getFileExtension(file.name);
-      const materialKey = "PLA";
+      const materialKey = Object.keys(MATERIALS)[0];
+
+      if (!materialKey) {
+        throw new Error("No hay materiales disponibles para cotizar.");
+      }
 
       return {
         id: uid(),
@@ -1406,7 +1394,9 @@
     }
 
     function colorOptions(obj) {
-      return MATERIALS[obj.materialKey].colors
+      const material = MATERIALS[obj.materialKey];
+      if (!material || !Array.isArray(material.colors)) return "";
+      return material.colors
         .map((color) => `<option value="${color}" ${color === obj.color ? "selected" : ""}>${color}</option>`)
         .join("");
     }
@@ -1573,7 +1563,7 @@
 
         if (action === "material") {
           obj.materialKey = target.value;
-          obj.color = MATERIALS[obj.materialKey].colors[0];
+          obj.color = MATERIALS[obj.materialKey]?.colors?.[0] || "";
         }
 
         if (action === "color") obj.color = target.value;
@@ -2366,11 +2356,34 @@
       showQuoteModal();
     });
 
+
+    function bindEnterToQuoteModal() {
+      const fields = ["customerName", "customerEmail", "customerPhone", "customerNotes"];
+
+      for (const id of fields) {
+        const field = $(id);
+        if (!field) continue;
+
+        field.addEventListener("keydown", (event) => {
+          if (event.key === "Enter") {
+            event.preventDefault();
+            submitQuoteRequest();
+          }
+        });
+      }
+    }
+
     $("cancelQuoteBtn").addEventListener("click", hideQuoteModal);
     $("submitQuoteBtn").addEventListener("click", submitQuoteRequest);
+    bindEnterToQuoteModal();
 
-    bindObjectListEvents();
-    recalcAndRender(true);
+    async function initCustomerPage() {
+      await loadPublicMaterials();
+      bindObjectListEvents();
+      recalcAndRender(true);
+    }
+
+    initCustomerPage();
   </script>
 
   <script type="module">

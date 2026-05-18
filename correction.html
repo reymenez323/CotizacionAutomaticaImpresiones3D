@@ -160,7 +160,7 @@
 
         <div>
           <label for="message">Mensaje para el equipo</label>
-          <textarea id="message" placeholder="Describe qué cambiaste o cualquier detalle importante..."></textarea>
+          <textarea id="message" maxlength="2000" placeholder="Describe qué cambiaste o cualquier detalle importante..."></textarea>
         </div>
 
         <div id="statusBox" class="notice hidden"></div>
@@ -203,6 +203,22 @@
       } catch (error) {
         loading.textContent = error.message;
         loading.className = "notice bad";
+      }
+    }
+
+
+    function bindEnterCorrectionSubmit() {
+      const fields = [document.getElementById("message")];
+
+      for (const field of fields) {
+        if (!field) continue;
+
+        field.addEventListener("keydown", (event) => {
+          if (event.key === "Enter") {
+            event.preventDefault();
+            form.requestSubmit();
+          }
+        });
       }
     }
 
@@ -252,6 +268,7 @@
       }
     });
 
+    bindEnterCorrectionSubmit();
     loadCorrection();
   </script>
 </body>

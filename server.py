@@ -7,7 +7,10 @@ import smtplib
 import sqlite3
 import subprocess
 import tempfile
+import time
 import uuid
+import hmac
+import secrets
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
@@ -31,17 +34,8 @@ BED_Y = 256.0
 BED_Z = 256.0
 PACKING_GAP_MM = 8.0
 
-DEFAULT_FILAMENT_PRICE_PER_GRAM = 2.0
-TPU_FILAMENT_PRICE_PER_GRAM = 3.0
-
-MATERIAL_DENSITY_G_CM3 = {
-    "PLA": 1.24,
-    "PETG": 1.27,
-    "ABS": 1.04,
-    "TPU": 1.21,
-    "NYLON": 1.14,
-}
-
+# Material pricing/density is stored in the database.
+# Do not hardcode material characteristics here.
 FILAMENT_DIAMETER_MM = 1.75
 
 MACHINE_PRICE_PER_HOUR = 30.0
@@ -55,6 +49,7 @@ MINIMUM_QUOTE = 150.0
 
 DATABASE_PATH = Path(os.environ.get("DATABASE_PATH", APP_DIR / "data" / "prototiposrd.db"))
 UPLOAD_DIR = Path(os.environ.get("UPLOAD_DIR", APP_DIR / "data" / "uploads"))
+SEED_MATERIALS_PATH = Path(os.environ.get("SEED_MATERIALS_PATH", APP_DIR / "seed_materials.sql"))
 ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "admin123")
 
 SMTP_HOST = os.environ.get("SMTP_HOST", "")
@@ -65,6 +60,196 @@ SMTP_FROM = os.environ.get("SMTP_FROM", SMTP_USER or "no-reply@prototiposrd.com"
 SMTP_USE_TLS = os.environ.get("SMTP_USE_TLS", "true").lower() == "true"
 ADMIN_NOTIFICATION_EMAIL = os.environ.get("ADMIN_NOTIFICATION_EMAIL", "")
 
+ENVIRONMENT = os.environ.get("ENVIRONMENT", "development").lower()
+ALLOWED_ORIGINS = [
+    origin.strip().rstrip("/")
+    for origin in os.environ.get("ALLOWED_ORIGINS", "").split(",")
+    if origin.strip()
+]
+ALLOWED_HOSTS = [
+    host.strip()
+    for host in os.environ.get("ALLOWED_HOSTS", "").split(",")
+    if host.strip()
+]
+
+MAX_UPLOAD_MB = float(os.environ.get("MAX_UPLOAD_MB", "50"))
+MAX_REQUEST_BODY_MB = float(os.environ.get("MAX_REQUEST_BODY_MB", "250"))
+MAX_FILES_PER_REQUEST = int(os.environ.get("MAX_FILES_PER_REQUEST", "20"))
+
+ALLOWED_FILE_EXTENSIONS = {".stl", ".obj", ".3mf", ".step", ".stp"}
+ALLOWED_FILE_CONTENT_TYPES = {
+    "",
+    "application/octet-stream",
+    "application/sla",
+    "model/stl",
+    "model/obj",
+    "application/vnd.ms-3mfdocument",
+    "application/zip",
+}
+
+RATE_LIMIT_WINDOW_SECONDS = int(os.environ.get("RATE_LIMIT_WINDOW_SECONDS", "60"))
+RATE_LIMIT_DEFAULT = int(os.environ.get("RATE_LIMIT_DEFAULT", "180"))
+RATE_LIMIT_QUOTE = int(os.environ.get("RATE_LIMIT_QUOTE", "20"))
+RATE_LIMIT_SLICE = int(os.environ.get("RATE_LIMIT_SLICE", "40"))
+RATE_LIMIT_ADMIN = int(os.environ.get("RATE_LIMIT_ADMIN", "90"))
+RATE_LIMIT_CORRECTION = int(os.environ.get("RATE_LIMIT_CORRECTION", "20"))
+
+_rate_limit_store: dict[str, list[float]] = {}
+
+
+def client_ip(request: Request) -> str:
+    forwarded = request.headers.get("x-forwarded-for", "")
+    if forwarded:
+        return forwarded.split(",")[0].strip()
+    return request.client.host if request.client else "unknown"
+
+
+def rate_limit_bucket(request: Request) -> tuple[str, int]:
+    path = request.url.path
+
+    if path.startswith("/api/slice-batch"):
+        return "slice", RATE_LIMIT_SLICE
+    if path.startswith("/api/quote-requests"):
+        return "quote", RATE_LIMIT_QUOTE
+    if path.startswith("/api/corrections"):
+        return "correction", RATE_LIMIT_CORRECTION
+    if path.startswith("/api/admin"):
+        return "admin", RATE_LIMIT_ADMIN
+
+    return "default", RATE_LIMIT_DEFAULT
+
+
+def check_rate_limit(request: Request) -> tuple[bool, int]:
+    bucket, limit = rate_limit_bucket(request)
+    ip = client_ip(request)
+    key = f"{bucket}:{ip}"
+    now = time.time()
+    window_start = now - RATE_LIMIT_WINDOW_SECONDS
+
+    history = _rate_limit_store.get(key, [])
+    history = [stamp for stamp in history if stamp >= window_start]
+
+    if len(history) >= limit:
+        retry_after = max(1, int(RATE_LIMIT_WINDOW_SECONDS - (now - history[0])))
+        _rate_limit_store[key] = history
+        return False, retry_after
+
+    history.append(now)
+    _rate_limit_store[key] = history
+    return True, 0
+
+
+def same_origin_allowed(request: Request) -> bool:
+    origin = request.headers.get("origin")
+    if not origin:
+        return True
+
+    origin = origin.rstrip("/")
+
+    if ALLOWED_ORIGINS and origin in ALLOWED_ORIGINS:
+        return True
+
+    host = request.headers.get("host", "")
+    scheme = request.headers.get("x-forwarded-proto") or request.url.scheme
+    same_origin = f"{scheme}://{host}".rstrip("/")
+
+    return origin == same_origin
+
+
+def secure_filename(filename: str) -> str:
+    name = Path(filename or "archivo").name
+    name = re.sub(r"[^A-Za-z0-9._ -]+", "_", name).strip()
+    name = name[:120] or "archivo"
+    return name
+
+
+def validate_upload_filename(filename: str) -> str:
+    safe = secure_filename(filename)
+    extension = Path(safe).suffix.lower()
+
+    if extension not in ALLOWED_FILE_EXTENSIONS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Formato no permitido: {extension}. Usa STL, OBJ, 3MF, STEP o STP.",
+        )
+
+    return safe
+
+
+def validate_upload_content(content: bytes, filename: str, content_type: str = "") -> None:
+    validate_upload_filename(filename)
+
+    if len(content) <= 0:
+        raise HTTPException(status_code=400, detail=f"{filename}: archivo vacío.")
+
+    max_bytes = int(MAX_UPLOAD_MB * 1024 * 1024)
+    if len(content) > max_bytes:
+        raise HTTPException(
+            status_code=413,
+            detail=f"{filename}: excede el máximo permitido de {MAX_UPLOAD_MB:.0f} MB.",
+        )
+
+    if content_type and content_type not in ALLOWED_FILE_CONTENT_TYPES:
+        # Browsers often send application/octet-stream, so this is intentionally permissive.
+        print(f"[security] Content-Type no típico para {filename}: {content_type}", flush=True)
+
+
+def validate_file_count(files: list[UploadFile]) -> None:
+    if len(files) > MAX_FILES_PER_REQUEST:
+        raise HTTPException(
+            status_code=413,
+            detail=f"Demasiados archivos. Máximo permitido: {MAX_FILES_PER_REQUEST}.",
+        )
+
+
+def validate_email(value: str) -> str:
+    email = (value or "").strip().lower()
+    if len(email) > 254 or not re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", email):
+        raise HTTPException(status_code=400, detail="Correo electrónico inválido.")
+    return email
+
+
+def validate_phone(value: str) -> str:
+    phone = (value or "").strip()
+    digits = re.sub(r"\D+", "", phone)
+    if len(digits) < 7 or len(digits) > 20:
+        raise HTTPException(status_code=400, detail="Teléfono inválido.")
+    return phone[:40]
+
+
+def clean_text(value: str, max_len: int = 500) -> str:
+    value = (value or "").strip()
+    value = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f]+", "", value)
+    return value[:max_len]
+
+
+def validate_customer_data(name: str, email: str, phone: str, notes: str) -> tuple[str, str, str, str]:
+    return (
+        clean_text(name, 120),
+        validate_email(email),
+        validate_phone(phone),
+        clean_text(notes, 2000),
+    )
+
+
+def validate_commitment_date(value: str) -> str:
+    value = (value or "").strip()
+    if not value:
+        return ""
+    if not re.match(r"^\d{4}-\d{2}-\d{2}$", value):
+        raise HTTPException(status_code=400, detail="Fecha compromiso inválida.")
+    return value
+
+
+def safe_upload_path(relative_path: str) -> Path:
+    base = UPLOAD_DIR.resolve()
+    target = (UPLOAD_DIR / relative_path).resolve()
+
+    if base not in target.parents and target != base:
+        raise HTTPException(status_code=403, detail="Ruta de archivo no permitida.")
+
+    return target
+
 
 def get_db() -> sqlite3.Connection:
     DATABASE_PATH.parent.mkdir(parents=True, exist_ok=True)
@@ -72,6 +257,22 @@ def get_db() -> sqlite3.Connection:
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
     return conn
+
+
+
+def seed_material_catalog_if_empty(conn: sqlite3.Connection) -> None:
+    existing = conn.execute("SELECT COUNT(*) AS total FROM material_catalog").fetchone()
+
+    if existing and int(existing["total"]) > 0:
+        return
+
+    if not SEED_MATERIALS_PATH.exists():
+        print("[materials] No seed_materials.sql found; material catalog starts empty.", flush=True)
+        return
+
+    sql = SEED_MATERIALS_PATH.read_text(encoding="utf-8")
+    conn.executescript(sql)
+    print("[materials] Initial material catalog loaded from seed_materials.sql.", flush=True)
 
 
 def init_db() -> None:
@@ -126,8 +327,36 @@ def init_db() -> None:
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (request_id) REFERENCES quote_requests(id)
             );
+
+            CREATE TABLE IF NOT EXISTS material_catalog (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                material_key TEXT NOT NULL UNIQUE,
+                name TEXT NOT NULL,
+                description TEXT,
+                price_per_gram REAL NOT NULL DEFAULT 2.0,
+                density_g_cm3 REAL NOT NULL DEFAULT 1.24,
+                density_factor REAL NOT NULL DEFAULT 1.0,
+                is_active INTEGER NOT NULL DEFAULT 1,
+                is_out_of_stock INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE TABLE IF NOT EXISTS material_colors (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                material_id INTEGER NOT NULL,
+                color_name TEXT NOT NULL,
+                is_active INTEGER NOT NULL DEFAULT 1,
+                is_out_of_stock INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(material_id, color_name),
+                FOREIGN KEY (material_id) REFERENCES material_catalog(id)
+            );
             """
         )
+
+
 
         existing_request_cols = {
             row["name"] for row in conn.execute("PRAGMA table_info(quote_requests)").fetchall()
@@ -148,11 +377,12 @@ def init_db() -> None:
             conn.execute("ALTER TABLE quote_files ADD COLUMN source TEXT NOT NULL DEFAULT 'original'")
 
         conn.execute("CREATE INDEX IF NOT EXISTS idx_quote_requests_correction_token ON quote_requests(correction_token)")
+        seed_material_catalog_if_empty(conn)
 
 
 def require_admin(request: Request) -> None:
     supplied = request.headers.get("X-Admin-Password", "")
-    if not ADMIN_PASSWORD or supplied != ADMIN_PASSWORD:
+    if not ADMIN_PASSWORD or not hmac.compare_digest(str(supplied), str(ADMIN_PASSWORD)):
         raise HTTPException(status_code=401, detail="No autorizado")
 
 
@@ -201,12 +431,15 @@ def save_upload_bytes_for_request(
     content_type: str = "",
     source: str = "original",
 ) -> int:
+    validate_upload_content(content, original_filename, content_type)
+
     request_dir = UPLOAD_DIR / request_code
     request_dir.mkdir(parents=True, exist_ok=True)
 
-    original = Path(original_filename or "archivo").name
-    stored = f"{uuid.uuid4().hex}_{original}"
-    path = request_dir / stored
+    original = validate_upload_filename(original_filename or "archivo")
+    stored = f"{secrets.token_hex(16)}_{original}"
+    path = safe_upload_path(str(Path(request_code) / stored))
+    path.parent.mkdir(parents=True, exist_ok=True)
     path.write_bytes(content)
 
     cursor = conn.execute(
@@ -316,20 +549,90 @@ def build_customer_email_body(request_code: str, customer_name: str, quote_resul
     return "\n".join(lines)
 
 
-app = FastAPI(title="Cotizador 3D Backend - Slicing por cama completa")
+app = FastAPI(
+    title="PrototiposRD Backend",
+    docs_url=None if ENVIRONMENT == "production" else "/docs",
+    redoc_url=None if ENVIRONMENT == "production" else "/redoc",
+)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=ALLOWED_ORIGINS or [],
+    allow_credentials=False,
+    allow_methods=["GET", "POST"],
+    allow_headers=["Content-Type", "X-Admin-Password"],
 )
+
+
+@app.middleware("http")
+async def security_middleware(request: Request, call_next):
+    host = request.headers.get("host", "").split(":")[0]
+    if ALLOWED_HOSTS and host not in ALLOWED_HOSTS:
+        return JSONResponse(status_code=400, content={"detail": "Host no permitido."})
+
+    if request.method in {"POST", "PUT", "PATCH", "DELETE"} and not same_origin_allowed(request):
+        return JSONResponse(status_code=403, content={"detail": "Origen no permitido."})
+
+    content_length = request.headers.get("content-length")
+    if content_length:
+        try:
+            max_body = int(MAX_REQUEST_BODY_MB * 1024 * 1024)
+            if int(content_length) > max_body:
+                return JSONResponse(
+                    status_code=413,
+                    content={"detail": f"Solicitud demasiado grande. Máximo: {MAX_REQUEST_BODY_MB:.0f} MB."},
+                )
+        except ValueError:
+            return JSONResponse(status_code=400, content={"detail": "Content-Length inválido."})
+
+    limited_paths = (
+        "/api/slice-batch",
+        "/api/quote-requests",
+        "/api/corrections",
+        "/api/admin",
+    )
+    if request.url.path.startswith(limited_paths):
+        ok, retry_after = check_rate_limit(request)
+        if not ok:
+            return JSONResponse(
+                status_code=429,
+                headers={"Retry-After": str(retry_after)},
+                content={"detail": "Demasiadas solicitudes. Intenta de nuevo más tarde."},
+            )
+
+    response = await call_next(request)
+
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=(), payment=()"
+    response.headers["Cross-Origin-Opener-Policy"] = "same-origin"
+    response.headers["Cross-Origin-Resource-Policy"] = "same-origin"
+    response.headers["Content-Security-Policy"] = (
+        "default-src 'self'; "
+        "script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
+        "style-src 'self' 'unsafe-inline'; "
+        "img-src 'self' data: blob:; "
+        "connect-src 'self'; "
+        "font-src 'self' data:; "
+        "worker-src 'self' blob:; "
+        "object-src 'none'; "
+        "base-uri 'self'; "
+        "frame-ancestors 'none'; "
+        "form-action 'self';"
+    )
+
+    if request.url.scheme == "https" or request.headers.get("x-forwarded-proto") == "https":
+        response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+
+    return response
 
 
 @app.on_event("startup")
 async def startup_event():
     init_db()
+    if ADMIN_PASSWORD in {"", "admin123", "CHANGE_ME"}:
+        print("[security] ADVERTENCIA: cambia ADMIN_PASSWORD antes de producción.", flush=True)
 
 
 @app.exception_handler(HTTPException)
@@ -466,7 +769,7 @@ def first_float_from_text(value: str) -> Optional[float]:
 
 
 def material_density(material: str) -> float:
-    return MATERIAL_DENSITY_G_CM3.get(str(material).upper(), 1.24)
+    return get_material_density(material)
 
 
 def filament_mm_to_grams(length_mm: float, material: str) -> float:
@@ -918,6 +1221,7 @@ def auto_orient_mesh(mesh: trimesh.Trimesh) -> tuple[trimesh.Trimesh, dict]:
 
 def build_models(files: list[UploadFile], metadata: list[dict], tmp_dir: Path) -> list[PrintableModel]:
     models: list[PrintableModel] = []
+    validate_file_count(files)
 
     if len(files) != len(metadata):
         raise HTTPException(
@@ -943,6 +1247,7 @@ def build_models(files: list[UploadFile], metadata: list[dict], tmp_dir: Path) -
                 },
             )
 
+        validate_upload_filename(upload.filename or f"input_{index}{extension}")
         input_path = tmp_dir / f"input_{index}{extension}"
 
         try:
@@ -1519,10 +1824,42 @@ def build_prusaslicer_command(
     return cmd
 
 
+def get_material_row(material: str) -> Optional[sqlite3.Row]:
+    key = str(material or "").upper()
+    try:
+        with get_db() as conn:
+            return conn.execute(
+                """
+                SELECT *
+                FROM material_catalog
+                WHERE UPPER(material_key) = ?
+                """,
+                (key,),
+            ).fetchone()
+    except Exception:
+        return None
+
+
+def get_material_density(material: str) -> float:
+    row = get_material_row(material)
+    if row:
+        return float(row["density_g_cm3"])
+
+    raise HTTPException(
+        status_code=400,
+        detail=f"Material no configurado en base de datos: {material}",
+    )
+
+
 def material_price_per_gram(material: str) -> float:
-    if material.upper() == "TPU":
-        return TPU_FILAMENT_PRICE_PER_GRAM
-    return DEFAULT_FILAMENT_PRICE_PER_GRAM
+    row = get_material_row(material)
+    if row:
+        return float(row["price_per_gram"])
+
+    raise HTTPException(
+        status_code=400,
+        detail=f"Material no configurado en base de datos: {material}",
+    )
 
 
 def slice_plate(
@@ -1593,7 +1930,7 @@ async def debug_info():
             "supported_backend_formats": ["stl", "obj", "3mf"],
             "bed_mm": [BED_X, BED_Y, BED_Z],
             "filament_diameter_mm": FILAMENT_DIAMETER_MM,
-            "material_density_g_cm3": MATERIAL_DENSITY_G_CM3,
+            "material_source": "database",
             "material_parser": "grams, cm3, mm fallback",
             "setup_cost_per_plate_internal": SETUP_COST_PER_PLATE,
             "grouping_rule": "different material or different print profile = separate sliced plate group",
@@ -1744,8 +2081,10 @@ async def create_quote_request(
     except json.JSONDecodeError:
         raise HTTPException(status_code=400, detail="Datos de cotización inválidos.")
 
-    if not customer_email.strip() or not customer_phone.strip():
-        raise HTTPException(status_code=400, detail="Correo y teléfono son obligatorios.")
+    validate_file_count(files)
+    customer_name, customer_email, customer_phone, customer_notes = validate_customer_data(
+        customer_name, customer_email, customer_phone, customer_notes
+    )
 
     total_price = float(result.get("totalPrice", 0))
     total_pieces = int(result.get("totalPieces", 0))
@@ -1770,10 +2109,10 @@ async def create_quote_request(
             """,
             (
                 request_code,
-                customer_name.strip(),
-                customer_email.strip(),
-                customer_phone.strip(),
-                customer_notes.strip(),
+                customer_name,
+                customer_email,
+                customer_phone,
+                customer_notes,
                 json.dumps(metadata, ensure_ascii=False),
                 json.dumps(result, ensure_ascii=False),
                 total_price,
@@ -1805,8 +2144,8 @@ async def create_quote_request(
             (request_id,),
         )
 
-    body = build_customer_email_body(request_code, customer_name.strip(), result, metadata if isinstance(metadata, list) else [])
-    sent_customer = send_email(customer_email.strip(), f"PrototiposRD · Solicitud {request_code}", body)
+    body = build_customer_email_body(request_code, customer_name, result, metadata if isinstance(metadata, list) else [])
+    sent_customer = send_email(customer_email, f"PrototiposRD · Solicitud {request_code}", body)
 
     if ADMIN_NOTIFICATION_EMAIL:
         send_email(
@@ -1830,6 +2169,293 @@ async def create_quote_request(
         "request_code": request_code,
         "email_sent": sent_customer,
     }
+
+
+
+@app.get("/api/materials")
+async def public_materials():
+    with get_db() as conn:
+        materials = conn.execute(
+            """
+            SELECT *
+            FROM material_catalog
+            WHERE is_active = 1 AND is_out_of_stock = 0
+            ORDER BY name
+            """
+        ).fetchall()
+
+        result = {}
+
+        for material in materials:
+            colors = conn.execute(
+                """
+                SELECT color_name
+                FROM material_colors
+                WHERE material_id = ? AND is_active = 1 AND is_out_of_stock = 0
+                ORDER BY color_name
+                """,
+                (material["id"],),
+            ).fetchall()
+
+            color_names = [row["color_name"] for row in colors]
+
+            if not color_names:
+                continue
+
+            result[material["material_key"]] = {
+                "name": material["name"],
+                "description": material["description"] or "",
+                "pricePerGram": float(material["price_per_gram"]),
+                "pricePerKg": float(material["price_per_gram"]) * 1000.0,
+                "densityFactor": float(material["density_factor"]),
+                "colors": color_names,
+            }
+
+    return {"materials": result}
+
+
+@app.get("/api/admin/materials")
+async def admin_materials(request: Request):
+    require_admin(request)
+
+    with get_db() as conn:
+        materials = conn.execute(
+            "SELECT * FROM material_catalog ORDER BY name"
+        ).fetchall()
+
+        result = []
+
+        for material in materials:
+            colors = conn.execute(
+                "SELECT * FROM material_colors WHERE material_id = ? ORDER BY color_name",
+                (material["id"],),
+            ).fetchall()
+
+            data = row_to_dict(material)
+            data["price_per_kg"] = float(data.get("price_per_gram", 0) or 0) * 1000.0
+            data["colors"] = [row_to_dict(color) for color in colors]
+            result.append(data)
+
+    return {"materials": result}
+
+
+@app.post("/api/admin/materials")
+async def admin_save_material(request: Request):
+    require_admin(request)
+    payload = await request.json()
+
+    material_key = clean_text(payload.get("material_key", ""), 30).upper()
+    name = clean_text(payload.get("name", ""), 80)
+    description = clean_text(payload.get("description", ""), 500)
+
+    if not re.match(r"^[A-Z0-9_-]{2,30}$", material_key):
+        raise HTTPException(status_code=400, detail="Clave de material inválida.")
+    if not name:
+        raise HTTPException(status_code=400, detail="Nombre de material requerido.")
+
+    try:
+        if "price_per_kg" in payload:
+            price_per_kg = max(1.0, float(payload.get("price_per_kg", 2000.0)))
+            price_per_gram = price_per_kg / 1000.0
+        else:
+            price_per_gram = max(0.01, float(payload.get("price_per_gram", 2.0)))
+
+        density_g_cm3 = max(0.01, float(payload.get("density_g_cm3", 1.24)))
+        density_factor = max(0.01, float(payload.get("density_factor", 1.0)))
+    except Exception:
+        raise HTTPException(status_code=400, detail="Valores numéricos inválidos.")
+
+    is_active = 1 if payload.get("is_active", True) else 0
+    is_out_of_stock = 1 if payload.get("is_out_of_stock", False) else 0
+    colors = payload.get("colors", [])
+    replace_colors = bool(payload.get("replace_colors", False))
+
+    if not isinstance(colors, list):
+        raise HTTPException(status_code=400, detail="Lista de colores inválida.")
+
+    with get_db() as conn:
+        existing = conn.execute(
+            "SELECT id FROM material_catalog WHERE material_key = ?",
+            (material_key,),
+        ).fetchone()
+
+        if existing:
+            material_id = existing["id"]
+            conn.execute(
+                """
+                UPDATE material_catalog
+                SET name = ?, description = ?, price_per_gram = ?, density_g_cm3 = ?,
+                    density_factor = ?, is_active = ?, is_out_of_stock = ?,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+                """,
+                (
+                    name,
+                    description,
+                    price_per_gram,
+                    density_g_cm3,
+                    density_factor,
+                    is_active,
+                    is_out_of_stock,
+                    material_id,
+                ),
+            )
+        else:
+            cursor = conn.execute(
+                """
+                INSERT INTO material_catalog (
+                    material_key, name, description, price_per_gram, density_g_cm3,
+                    density_factor, is_active, is_out_of_stock
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    material_key,
+                    name,
+                    description,
+                    price_per_gram,
+                    density_g_cm3,
+                    density_factor,
+                    is_active,
+                    is_out_of_stock,
+                ),
+            )
+            material_id = int(cursor.lastrowid)
+
+        if replace_colors:
+            desired_colors = {
+                clean_text(str(color.get("color_name", "")), 60).lower()
+                for color in colors
+                if clean_text(str(color.get("color_name", "")), 60)
+            }
+            existing_colors = conn.execute(
+                "SELECT id, color_name FROM material_colors WHERE material_id = ?",
+                (material_id,),
+            ).fetchall()
+            for existing_color in existing_colors:
+                if existing_color["color_name"].lower() not in desired_colors:
+                    conn.execute(
+                        "DELETE FROM material_colors WHERE id = ?",
+                        (existing_color["id"],),
+                    )
+
+        for color in colors:
+            color_name = clean_text(str(color.get("color_name", "")), 60)
+            if not color_name:
+                continue
+
+            color_active = 1 if color.get("is_active", True) else 0
+            color_oos = 1 if color.get("is_out_of_stock", False) else 0
+
+            existing_color = conn.execute(
+                """
+                SELECT id FROM material_colors
+                WHERE material_id = ? AND color_name = ?
+                """,
+                (material_id, color_name),
+            ).fetchone()
+
+            if existing_color:
+                conn.execute(
+                    """
+                    UPDATE material_colors
+                    SET is_active = ?, is_out_of_stock = ?, updated_at = CURRENT_TIMESTAMP
+                    WHERE id = ?
+                    """,
+                    (color_active, color_oos, existing_color["id"]),
+                )
+            else:
+                conn.execute(
+                    """
+                    INSERT INTO material_colors (
+                        material_id, color_name, is_active, is_out_of_stock
+                    )
+                    VALUES (?, ?, ?, ?)
+                    """,
+                    (material_id, color_name, color_active, color_oos),
+                )
+
+    return {"ok": True}
+
+
+@app.post("/api/admin/materials/{material_id}/visibility")
+async def admin_material_visibility(material_id: int, request: Request):
+    require_admin(request)
+    payload = await request.json()
+
+    is_active = 1 if payload.get("is_active", True) else 0
+    is_out_of_stock = 1 if payload.get("is_out_of_stock", False) else 0
+
+    with get_db() as conn:
+        conn.execute(
+            """
+            UPDATE material_catalog
+            SET is_active = ?, is_out_of_stock = ?, updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+            """,
+            (is_active, is_out_of_stock, material_id),
+        )
+
+    return {"ok": True}
+
+
+@app.post("/api/admin/material-colors/{color_id}/visibility")
+async def admin_color_visibility(color_id: int, request: Request):
+    require_admin(request)
+    payload = await request.json()
+
+    is_active = 1 if payload.get("is_active", True) else 0
+    is_out_of_stock = 1 if payload.get("is_out_of_stock", False) else 0
+
+    with get_db() as conn:
+        conn.execute(
+            """
+            UPDATE material_colors
+            SET is_active = ?, is_out_of_stock = ?, updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+            """,
+            (is_active, is_out_of_stock, color_id),
+        )
+
+    return {"ok": True}
+
+
+@app.post("/api/admin/materials/{material_id}/delete")
+async def admin_delete_material(material_id: int, request: Request):
+    require_admin(request)
+
+    with get_db() as conn:
+        material = conn.execute(
+            "SELECT * FROM material_catalog WHERE id = ?",
+            (material_id,),
+        ).fetchone()
+
+        if not material:
+            raise HTTPException(status_code=404, detail="Material no encontrado.")
+
+        conn.execute("DELETE FROM material_colors WHERE material_id = ?", (material_id,))
+        conn.execute("DELETE FROM material_catalog WHERE id = ?", (material_id,))
+
+    return {"ok": True}
+
+
+@app.post("/api/admin/material-colors/{color_id}/delete")
+async def admin_delete_color(color_id: int, request: Request):
+    require_admin(request)
+
+    with get_db() as conn:
+        color = conn.execute(
+            "SELECT * FROM material_colors WHERE id = ?",
+            (color_id,),
+        ).fetchone()
+
+        if not color:
+            raise HTTPException(status_code=404, detail="Color no encontrado.")
+
+        conn.execute("DELETE FROM material_colors WHERE id = ?", (color_id,))
+
+    return {"ok": True}
+
 
 
 @app.get("/api/admin/requests")
@@ -1866,7 +2492,7 @@ async def admin_list_requests(request: Request, status: str = "", q: str = ""):
         for row in rows:
             request_id = row["id"]
             files = [row_to_dict(file_row) for file_row in conn.execute(
-                "SELECT id, original_filename, stored_filename, content_type, size_bytes, created_at FROM quote_files WHERE request_id = ? ORDER BY id",
+                "SELECT id, original_filename, stored_filename, content_type, size_bytes, source, created_at FROM quote_files WHERE request_id = ? ORDER BY id",
                 (request_id,),
             ).fetchall()]
             logs = [row_to_dict(log_row) for log_row in conn.execute(
@@ -1897,7 +2523,7 @@ async def admin_download_file(file_id: int, request: Request):
     if not row:
         raise HTTPException(status_code=404, detail="Archivo no encontrado.")
 
-    path = UPLOAD_DIR / row["stored_filename"]
+    path = safe_upload_path(row["stored_filename"])
     if not path.exists():
         raise HTTPException(status_code=404, detail="Archivo no existe en disco.")
 
@@ -1943,6 +2569,8 @@ async def upload_correction_files(
 ):
     if not files:
         raise HTTPException(status_code=400, detail="Debes subir al menos un archivo.")
+    validate_file_count(files)
+    message = clean_text(message, 2000)
 
     with get_db() as conn:
         row = conn.execute(
@@ -2003,9 +2631,9 @@ async def admin_update_request_status(request_id: int, request: Request):
     require_admin(request)
 
     payload = await request.json()
-    new_status = payload.get("status", "")
-    note = payload.get("note", "")
-    commitment_date = str(payload.get("commitment_date", "") or "").strip()
+    new_status = clean_text(payload.get("status", ""), 30)
+    note = clean_text(payload.get("note", ""), 2000)
+    commitment_date = validate_commitment_date(payload.get("commitment_date", "") or "")
     notify_customer = bool(payload.get("notify_customer", False))
 
     allowed = {"accepted", "correction", "rejected", "ignored", "new"}
@@ -2028,7 +2656,7 @@ async def admin_update_request_status(request_id: int, request: Request):
                 raise HTTPException(status_code=400, detail="Debes escribir la razón de la corrección.")
 
             if not correction_token:
-                correction_token = uuid.uuid4().hex
+                correction_token = secrets.token_urlsafe(32)
 
             correction_url = f"{app_base_url(request)}/correction/{correction_token}"
 

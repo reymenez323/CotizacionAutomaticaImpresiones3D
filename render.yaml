@@ -30,3 +30,23 @@ services:
         sync: false
       - key: PUBLIC_BASE_URL
         sync: false
+      - key: ENVIRONMENT
+        value: "production"
+      - key: ALLOWED_ORIGINS
+        value: ""
+      - key: ALLOWED_HOSTS
+        value: ""
+      - key: MAX_UPLOAD_MB
+        value: "50"
+      - key: MAX_REQUEST_BODY_MB
+        value: "250"
+      - key: MAX_FILES_PER_REQUEST
+        value: "20"
+      - key: RATE_LIMIT_QUOTE
+        value: "20"
+      - key: RATE_LIMIT_SLICE
+        value: "40"
+      - key: RATE_LIMIT_ADMIN
+        value: "90"
+      - key: RATE_LIMIT_CORRECTION
+        value: "20"

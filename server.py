@@ -613,7 +613,7 @@ async def security_middleware(request: Request, call_next):
         "script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
         "style-src 'self' 'unsafe-inline'; "
         "img-src 'self' data: blob:; "
-        "connect-src 'self'; "
+        "connect-src 'self' blob: data:; "
         "font-src 'self' data:; "
         "worker-src 'self' blob:; "
         "object-src 'none'; "
@@ -2180,7 +2180,7 @@ async def public_materials():
             SELECT *
             FROM material_catalog
             WHERE is_active = 1 AND is_out_of_stock = 0
-            ORDER BY name
+            ORDER BY CASE WHEN UPPER(material_key) = 'PLA' THEN 0 ELSE 1 END, name
             """
         ).fetchall()
 
@@ -2192,7 +2192,7 @@ async def public_materials():
                 SELECT color_name
                 FROM material_colors
                 WHERE material_id = ? AND is_active = 1 AND is_out_of_stock = 0
-                ORDER BY color_name
+                ORDER BY CASE WHEN LOWER(color_name) = 'blanco' THEN 0 WHEN LOWER(color_name) = 'white' THEN 0 ELSE 1 END, color_name
                 """,
                 (material["id"],),
             ).fetchall()
@@ -2220,14 +2220,14 @@ async def admin_materials(request: Request):
 
     with get_db() as conn:
         materials = conn.execute(
-            "SELECT * FROM material_catalog ORDER BY name"
+            "SELECT * FROM material_catalog ORDER BY CASE WHEN UPPER(material_key) = 'PLA' THEN 0 ELSE 1 END, name"
         ).fetchall()
 
         result = []
 
         for material in materials:
             colors = conn.execute(
-                "SELECT * FROM material_colors WHERE material_id = ? ORDER BY color_name",
+                "SELECT * FROM material_colors WHERE material_id = ? ORDER BY CASE WHEN LOWER(color_name) = 'blanco' THEN 0 WHEN LOWER(color_name) = 'white' THEN 0 ELSE 1 END, color_name",
                 (material["id"],),
             ).fetchall()
 
